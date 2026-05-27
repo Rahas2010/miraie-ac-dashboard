@@ -25,10 +25,27 @@ export async function login(userId: string, password: string) {
   return response.json();
 }
 
+/**
+ * UNBROKEN ACCESS: Use Refresh Token to get a new Access Token
+ */
+export async function refreshToken(token: string) {
+  const response = await fetch(`${AUTH_URL}/userManagement/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': 'MirAIe/2.1.0' },
+    body: JSON.stringify({
+      clientId: CLIENT_ID,
+      refreshToken: token
+    }),
+  });
+  if (!response.ok) throw new Error('Refresh Failed');
+  return response.json();
+}
+
 export async function fetchDevices(token: string): Promise<MirAIeDevice[]> {
   const response = await fetch(`${BASE_URL}/homeManagement/homes`, {
     headers: { 'Authorization': `Bearer ${token}`, 'User-Agent': 'MirAIe/2.1.0' },
   });
+  if (!response.ok) throw new Error('Fetch Devices Failed');
   const homes = await response.json();
   return homes.flatMap((home: any) => 
     home.spaces.flatMap((space: any) => 
@@ -44,7 +61,7 @@ export async function fetchDevices(token: string): Promise<MirAIeDevice[]> {
 /**
  * CORE HARDWARE CONTROL - NO COMPROMISE
  */
-export async function sendCommand(token: string, deviceId: string, command: any): Promise<boolean> {
+export async function sendCommand(token: string, deviceId: string, topic: string, command: any): Promise<boolean> {
   const payload = mapCommandToPayload(command);
   const response = await fetch(`${BASE_URL}/deviceManagement/devices/${deviceId}/control`, {
     method: 'POST',
@@ -54,7 +71,7 @@ export async function sendCommand(token: string, deviceId: string, command: any)
       'User-Agent': 'MirAIe/2.1.0'
     },
     body: JSON.stringify({
-      topic: `p/${deviceId}/control`,
+      topic: topic || `p/${deviceId}/control`,
       ...payload
     }),
   });
