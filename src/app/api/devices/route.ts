@@ -1,28 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { fetchDevices } from '@/lib/miraie-api';
-import { getCachedAuth } from '@/lib/auth-state';
 
 /**
- * GET /api/devices - Get all MirAIe devices
+ * GET /api/devices - Get all MirAIe devices using token from header
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    // Check if authenticated
-    const auth = getCachedAuth();
-    if (!auth) {
-      // Try with env vars
-      const userId = process.env.MIRAIE_USER_ID;
-      const password = process.env.MIRAIE_PASSWORD;
+    const authHeader = request.headers.get('Authorization');
+    const token = authHeader?.split(' ')[1];
 
-      if (!userId || !password) {
-        return NextResponse.json(
-          { error: 'Not authenticated. Please login first.' },
-          { status: 401 }
-        );
-      }
+    if (!token) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const devices = await fetchDevices();
+    const devices = await fetchDevices(token);
 
     return NextResponse.json({
       devices: devices.map((d) => ({
@@ -39,10 +30,7 @@ export async function GET() {
   } catch (error) {
     console.error('Error fetching devices:', error);
     return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : 'Failed to fetch devices',
-        devices: [],
-      },
+      { error: 'Failed to fetch devices', devices: [] },
       { status: 500 }
     );
   }

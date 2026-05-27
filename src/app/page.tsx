@@ -2,16 +2,14 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Thermometer, Power, Wind, Droplets, RefreshCw, 
-  Snowflake, Flame, Fan, Gauge, Zap, Shield, Eye, EyeOff,
-  ChevronDown, ChevronUp, Activity, Leaf, Sun, Moon,
-  ChevronRight, LogOut
+  Power, Wind, Droplets, RefreshCw, 
+  Snowflake, Flame, Fan, Gauge, Shield, Eye, EyeOff,
+  ChevronRight, LogOut, Activity
 } from 'lucide-react';
 
 // ========== TYPES ==========
 type ACMode = 'cool' | 'heat' | 'dry' | 'auto' | 'fan' | 'off';
 type FanSpeed = 'auto' | '1' | '2' | '3' | '4' | '5';
-type ConvertiMode = 'off' | '40' | '55' | '70' | '80' | '90' | '100' | 'fc' | 'hc';
 
 interface ACState {
   power: boolean;
@@ -24,10 +22,8 @@ interface ACState {
   acdc: boolean;
   roomTemperature: number;
   humidity: number;
-  airQuality: number;
   online: boolean;
   lastUpdated: string;
-  modelName?: string;
 }
 
 interface Device {
@@ -45,42 +41,34 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
-  const [showConverti, setShowConverti] = useState(false);
-  
   const [acState, setAcState] = useState<ACState | null>(null);
+  const [token, setToken] = useState<string | null>(null);
 
-  // --- Auth & Initial Fetch ---
-  const checkAuth = useCallback(async () => {
-    try {
-      const res = await fetch('/api/auth');
-      const data = await res.json();
-      if (data.authenticated) {
-        setIsAuthenticated(true);
-        fetchDevicesInternal();
-      }
-    } catch {
-      setIsAuthenticated(false);
-    } finally {
+  // --- Initial Auth Check ---
+  useEffect(() => {
+    const savedToken = sessionStorage.getItem('miraie_token');
+    if (savedToken) {
+      setToken(savedToken);
+      setIsAuthenticated(true);
+      fetchDevicesInternal(savedToken);
+    } else {
       setIsLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    checkAuth();
-  }, [checkAuth]);
-
   // --- Device Management ---
-  const fetchDevicesInternal = async () => {
+  const fetchDevicesInternal = async (authToken: string) => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/devices');
+      const res = await fetch('/api/devices', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
       if (res.ok) {
         const data = await res.json();
         setDevices(data.devices || []);
       } else {
-        setError('Failed to fetch devices. Your session may have expired.');
-        setIsAuthenticated(false);
+        handleLogout();
       }
     } catch (err) {
       setError('Network error fetching devices');
@@ -90,24 +78,23 @@ export default function Dashboard() {
   };
 
   const pollStatus = useCallback(async () => {
-    if (!selectedDeviceId) return;
+    if (!selectedDeviceId || !token) return;
+    // Note: status still returns mock/cached data unless MQTT bridge is used
     try {
       const res = await fetch(`/api/status?deviceId=${selectedDeviceId}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.state) {
-          setAcState((prev) => ({ ...prev, ...data.state }));
-        }
+        if (data.state) setAcState((prev) => ({ ...prev, ...data.state }));
       }
     } catch (err) {
       console.error('Failed to poll status:', err);
     }
-  }, [selectedDeviceId]);
+  }, [selectedDeviceId, token]);
 
   useEffect(() => {
     if (selectedDeviceId) {
       pollStatus();
-      const interval = setInterval(pollStatus, 15000);
+      const interval = setInterval(pollStatus, 20000);
       return () => clearInterval(interval);
     }
   }, [selectedDeviceId, pollStatus]);
@@ -118,9 +105,7 @@ export default function Dashboard() {
     setIsLoading(true);
     setError(null);
     
-    // Explicitly cast currentTarget as HTMLFormElement for TypeScript
-    const form = e.currentTarget;
-    const formData = new FormData(form);
+    const formData = new FormData(e.currentTarget);
     const userId = formData.get('userId');
     const password = formData.get('password');
 
@@ -131,20 +116,24 @@ export default function Dashboard() {
         body: JSON.stringify({ userId, password }),
       });
       const data = await res.json();
-      if (res.ok) {
+      if (res.ok && data.token) {
+        sessionStorage.setItem('miraie_token', data.token);
+        setToken(data.token);
         setIsAuthenticated(true);
-        fetchDevicesInternal();
+        fetchDevicesInternal(data.token);
       } else {
         setError(data.error || 'Login failed');
+        setIsLoading(false);
       }
     } catch {
       setError('Connection failed');
-    } finally {
       setIsLoading(false);
     }
   };
 
   const handleLogout = () => {
+    sessionStorage.removeItem('miraie_token');
+    setToken(null);
     setIsAuthenticated(false);
     setDevices([]);
     setSelectedDeviceId(null);
@@ -152,35 +141,32 @@ export default function Dashboard() {
   };
 
   const sendCommand = async (command: Partial<ACState>) => {
-    if (!selectedDeviceId) return;
+    if (!selectedDeviceId || !token) return;
     setIsSending(true);
     try {
       const res = await fetch('/api/control', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ deviceId: selectedDeviceId, command }),
       });
       if (res.ok) {
         setAcState((prev) => prev ? { ...prev, ...command } : null);
       } else {
-        const data = await res.json();
-        setError(data.error || 'Failed to send command');
+        setError('Failed to send command');
       }
     } catch {
-      setError('Connection error while sending command');
+      setError('Connection error');
     } finally {
       setIsSending(false);
     }
   };
 
   // --- Views ---
-
   if (isLoading && !devices.length) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <RefreshCw className="animate-spin text-miraie-600" size={32} />
-      </div>
-    );
+    return <div className="min-h-screen flex items-center justify-center bg-slate-50"><RefreshCw className="animate-spin text-miraie-600" size={32} /></div>;
   }
 
   if (!isAuthenticated) {
@@ -188,25 +174,20 @@ export default function Dashboard() {
       <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50">
         <div className="w-full max-w-sm">
           <div className="text-center mb-8">
-            <div className="w-20 h-20 mx-auto mb-4 bg-miraie-600 rounded-3xl flex items-center justify-center shadow-lg">
-              <Wind className="text-white" size={40} />
-            </div>
+            <div className="w-20 h-20 mx-auto mb-4 bg-miraie-600 rounded-3xl flex items-center justify-center shadow-lg"><Wind className="text-white" size={40} /></div>
             <h1 className="text-2xl font-bold text-slate-900">MirAIe Login</h1>
-            <p className="text-slate-500 mt-2">Enter your MirAIe App credentials</p>
           </div>
           <form onSubmit={handleLogin} className="bg-white p-8 rounded-3xl shadow-sm space-y-4">
             {error && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-xl border border-red-100">{error}</div>}
             <input name="userId" type="text" placeholder="Email or Mobile" className="input-field" required />
-            <input name="password" type="password" placeholder="MirAIe Password" className="input-field" required />
+            <input name="password" type="password" placeholder="Password" className="input-field" required />
             <button type="submit" className="btn-primary w-full">Sign In</button>
-            <p className="text-xs text-slate-400 text-center">Credentials are not stored. They are used only to create a secure session.</p>
           </form>
         </div>
       </div>
     );
   }
 
-  // --- Device Selection Page ---
   if (!selectedDeviceId) {
     return (
       <div className="min-h-screen bg-slate-50 p-6">
@@ -214,200 +195,75 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-8">
             <h1 className="text-2xl font-bold text-slate-900">My Devices</h1>
             <div className="flex gap-2">
-              <button onClick={fetchDevicesInternal} className="btn-icon bg-white shadow-sm">
-                <RefreshCw size={20} />
-              </button>
-              <button onClick={handleLogout} className="btn-icon bg-white shadow-sm text-red-500">
-                <LogOut size={20} />
-              </button>
+              <button onClick={() => fetchDevicesInternal(token!)} className="btn-icon bg-white shadow-sm"><RefreshCw size={20} /></button>
+              <button onClick={handleLogout} className="btn-icon bg-white shadow-sm text-red-500"><LogOut size={20} /></button>
             </div>
           </div>
-
           <div className="grid gap-4">
-            {devices.length === 0 ? (
-              <div className="text-center py-12 bg-white rounded-3xl">
-                <Wind className="mx-auto text-slate-200 mb-4" size={48} />
-                <p className="text-slate-500">No devices found on this account.</p>
-              </div>
-            ) : (
-              devices.map((device) => (
-                <button
-                  key={device.deviceId}
-                  onClick={() => setSelectedDeviceId(device.deviceId)}
-                  className="bg-white p-6 rounded-3xl shadow-sm hover:shadow-md transition-all text-left flex items-center justify-between group"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${device.online ? 'bg-miraie-50 text-miraie-600' : 'bg-slate-100 text-slate-400'}`}>
-                      <Snowflake size={24} />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900">{device.deviceName}</h3>
-                      <p className="text-sm text-slate-500">{device.spaceName} • {device.homeName}</p>
-                    </div>
+            {devices.map((device) => (
+              <button key={device.deviceId} onClick={() => setSelectedDeviceId(device.deviceId)} className="bg-white p-6 rounded-3xl shadow-sm hover:shadow-md transition-all text-left flex items-center justify-between group">
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${device.online ? 'bg-miraie-50 text-miraie-600' : 'bg-slate-100 text-slate-400'}`}><Snowflake size={24} /></div>
+                  <div>
+                    <h3 className="font-semibold text-slate-900">{device.deviceName}</h3>
+                    <p className="text-sm text-slate-500">{device.spaceName}</p>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${device.online ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                      {device.online ? 'Online' : 'Offline'}
-                    </span>
-                    <ChevronRight className="text-slate-300 group-hover:text-miraie-600 transition-colors" />
-                  </div>
-                </button>
-              ))
-            )}
+                </div>
+                <ChevronRight className="text-slate-300 group-hover:text-miraie-600 transition-colors" />
+              </button>
+            ))}
           </div>
         </div>
       </div>
     );
   }
 
-  // --- Control Page ---
-  if (!acState) {
-     return <div className="min-h-screen flex items-center justify-center bg-slate-50"><RefreshCw className="animate-spin text-miraie-600" /></div>;
-  }
+  if (!acState) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><RefreshCw className="animate-spin text-miraie-600" /></div>;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-10">
       <header className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-6 h-16 flex items-center justify-between">
-          <button onClick={() => setSelectedDeviceId(null)} className="text-slate-500 font-medium hover:text-slate-900 transition-colors">
-            ← Back
-          </button>
+          <button onClick={() => setSelectedDeviceId(null)} className="text-slate-500 font-medium hover:text-slate-900 transition-colors">← Back</button>
           <div className="text-center">
-            <h2 className="font-bold text-slate-900 leading-tight">
-              {devices.find(d => d.deviceId === selectedDeviceId)?.deviceName}
-            </h2>
-            <p className="text-[10px] text-slate-400 uppercase tracking-widest">Control Panel</p>
+            <h2 className="font-bold text-slate-900 leading-tight">{devices.find(d => d.deviceId === selectedDeviceId)?.deviceName}</h2>
           </div>
-          <button onClick={pollStatus} className="btn-icon">
-            <RefreshCw size={18} className={isSending ? 'animate-spin' : ''} />
-          </button>
+          <button onClick={pollStatus} className="btn-icon"><RefreshCw size={18} className={isSending ? 'animate-spin' : ''} /></button>
         </div>
       </header>
-
       <main className="max-w-xl mx-auto p-6 space-y-6">
-        {error && <div className="p-4 bg-red-50 text-red-600 rounded-2xl border border-red-100 text-sm">{error}</div>}
-
-        {/* Main Temp Card */}
         <div className="bg-white rounded-[40px] p-10 shadow-sm relative overflow-hidden text-center">
           <div className="flex justify-between items-center mb-10">
-             <div className="flex items-center gap-2 text-slate-500 text-sm">
-               <Activity size={16} /> {acState.roomTemperature}°C Room
-             </div>
-             <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${acState.online ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                {acState.online ? 'Connected' : 'Offline'}
-             </div>
+             <div className="flex items-center gap-2 text-slate-500 text-sm"><Activity size={16} /> {acState.roomTemperature}°C Room</div>
+             <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${acState.online ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{acState.online ? 'Online' : 'Offline'}</div>
           </div>
-
           <div className="relative inline-block mb-10">
-            <span className="text-[120px] font-light leading-none tracking-tighter text-slate-900">
-              {acState.temperature}
-            </span>
+            <span className="text-[120px] font-light leading-none tracking-tighter text-slate-900">{acState.temperature}</span>
             <span className="text-2xl font-medium text-slate-300 absolute -top-2 -right-6">°C</span>
           </div>
-
           <div className="flex items-center justify-center gap-8">
-            <button 
-              onClick={() => sendCommand({ temperature: acState.temperature - 1 })}
-              disabled={!acState.power || isSending}
-              className="w-16 h-16 rounded-full border-2 border-slate-100 flex items-center justify-center text-slate-600 active:scale-90 transition-all disabled:opacity-20"
-            >
-              <span className="text-3xl font-light">−</span>
-            </button>
-            <button 
-              onClick={() => sendCommand({ power: !acState.power })}
-              className={`w-20 h-20 rounded-full flex items-center justify-center shadow-2xl transition-all active:scale-95 ${acState.power ? 'bg-miraie-600 text-white shadow-miraie-500/40' : 'bg-slate-100 text-slate-400'}`}
-            >
-              <Power size={32} />
-            </button>
-            <button 
-              onClick={() => sendCommand({ temperature: acState.temperature + 1 })}
-              disabled={!acState.power || isSending}
-              className="w-16 h-16 rounded-full border-2 border-slate-100 flex items-center justify-center text-slate-600 active:scale-90 transition-all disabled:opacity-20"
-            >
-              <span className="text-3xl font-light">+</span>
-            </button>
+            <button onClick={() => sendCommand({ temperature: acState.temperature - 1 })} disabled={!acState.power || isSending} className="w-16 h-16 rounded-full border-2 border-slate-100 flex items-center justify-center text-slate-600 active:scale-90 transition-all disabled:opacity-20"><span className="text-3xl font-light">−</span></button>
+            <button onClick={() => sendCommand({ power: !acState.power })} className={`w-20 h-20 rounded-full flex items-center justify-center shadow-2xl transition-all active:scale-95 ${acState.power ? 'bg-miraie-600 text-white shadow-miraie-500/40' : 'bg-slate-100 text-slate-400'}`}><Power size={32} /></button>
+            <button onClick={() => sendCommand({ temperature: acState.temperature + 1 })} disabled={!acState.power || isSending} className="w-16 h-16 rounded-full border-2 border-slate-100 flex items-center justify-center text-slate-600 active:scale-90 transition-all disabled:opacity-20"><span className="text-3xl font-light">+</span></button>
           </div>
         </div>
-
-        {/* Mode Selector */}
         <div className="grid grid-cols-5 gap-2">
            {(['cool', 'dry', 'fan', 'heat', 'auto'] as ACMode[]).map((m) => (
-             <button
-               key={m}
-               onClick={() => sendCommand({ mode: m, power: true })}
-               disabled={isSending}
-               className={`flex flex-col items-center justify-center py-4 rounded-3xl transition-all ${acState.mode === m && acState.power ? 'bg-miraie-600 text-white shadow-lg' : 'bg-white text-slate-400'}`}
-             >
-               {m === 'cool' && <Snowflake size={20} />}
-               {m === 'dry' && <Droplets size={20} />}
-               {m === 'fan' && <Fan size={20} />}
-               {m === 'heat' && <Flame size={20} />}
-               {m === 'auto' && <Gauge size={20} />}
+             <button key={m} onClick={() => sendCommand({ mode: m, power: true })} disabled={isSending} className={`flex flex-col items-center justify-center py-4 rounded-3xl transition-all ${acState.mode === m && acState.power ? 'bg-miraie-600 text-white shadow-lg' : 'bg-white text-slate-400'}`}>
                <span className="text-[10px] mt-2 font-bold uppercase">{m}</span>
              </button>
            ))}
         </div>
-
-        {/* Fan Speed */}
         <div className="bg-white p-6 rounded-[32px] shadow-sm">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <Fan size={16} className="text-slate-400" /> FAN SPEED
-            </h3>
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Fan size={16} className="text-slate-400" /> FAN SPEED</h3>
             <span className="text-miraie-600 font-bold text-sm uppercase">{acState.fanSpeed}</span>
           </div>
           <div className="flex gap-2">
             {(['auto', '1', '2', '3', '4', '5'] as FanSpeed[]).map((f) => (
-              <button
-                key={f}
-                onClick={() => sendCommand({ fanSpeed: f })}
-                className={`flex-1 py-3 rounded-2xl text-xs font-bold transition-all ${acState.fanSpeed === f ? 'bg-miraie-600 text-white shadow-md' : 'bg-slate-50 text-slate-400'}`}
-              >
-                {f === 'auto' ? 'A' : f}
-              </button>
+              <button key={f} onClick={() => sendCommand({ fanSpeed: f })} className={`flex-1 py-3 rounded-2xl text-xs font-bold transition-all ${acState.fanSpeed === f ? 'bg-miraie-600 text-white shadow-md' : 'bg-slate-50 text-slate-400'}`}>{f === 'auto' ? 'A' : f}</button>
             ))}
           </div>
-        </div>
-
-        {/* Swing & Settings */}
-        <div className="grid grid-cols-2 gap-4">
-           <button 
-             onClick={() => sendCommand({ verticalSwing: !acState.verticalSwing })}
-             className={`p-6 rounded-[32px] shadow-sm text-left transition-all ${acState.verticalSwing ? 'bg-miraie-600 text-white' : 'bg-white text-slate-900'}`}
-           >
-             <div className={`w-10 h-10 rounded-2xl flex items-center justify-center mb-4 ${acState.verticalSwing ? 'bg-white/20' : 'bg-slate-50'}`}>
-               <Wind size={20} />
-             </div>
-             <p className="text-[10px] font-bold opacity-60 uppercase">Vertical</p>
-             <p className="font-bold">Swing</p>
-           </button>
-
-           <button 
-             onClick={() => sendCommand({ horizontalSwing: !acState.horizontalSwing })}
-             className={`p-6 rounded-[32px] shadow-sm text-left transition-all ${acState.horizontalSwing ? 'bg-miraie-600 text-white' : 'bg-white text-slate-900'}`}
-           >
-             <div className={`w-10 h-10 rounded-2xl flex items-center justify-center mb-4 ${acState.horizontalSwing ? 'bg-white/20' : 'bg-slate-50'}`}>
-               <RefreshCw size={20} />
-             </div>
-             <p className="text-[10px] font-bold opacity-60 uppercase">Horizontal</p>
-             <p className="font-bold">Swing</p>
-           </button>
-        </div>
-
-        {/* Features Toggle */}
-        <div className="bg-white p-2 rounded-[32px] shadow-sm flex gap-1">
-           <button 
-             onClick={() => sendCommand({ nanoeG: !acState.nanoeG })}
-             className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl transition-all ${acState.nanoeG ? 'bg-emerald-500 text-white' : 'text-slate-400'}`}
-           >
-             <Shield size={18} /> <span className="text-xs font-bold uppercase">Nanoe-G</span>
-           </button>
-           <button 
-             onClick={() => sendCommand({ acdc: !acState.acdc })}
-             className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl transition-all ${acState.acdc ? 'bg-miraie-600 text-white' : 'text-slate-400'}`}
-           >
-             {acState.acdc ? <Eye size={18} /> : <EyeOff size={18} />} <span className="text-xs font-bold uppercase">LED</span>
-           </button>
         </div>
       </main>
     </div>

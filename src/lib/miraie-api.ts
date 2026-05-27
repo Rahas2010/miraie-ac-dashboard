@@ -1,11 +1,6 @@
 /**
  * Panasonic MirAIe API Client
  * Handles authentication, device management, and AC control
- * 
- * Real endpoints discovered from community reverse-engineering:
- * - Auth: https://auth.miraie.in/simplifi/v1/userManagement/login
- * - App:  https://app.miraie.in/simplifi/v1/homeManagement/homes
- * - MQTT: mqtt.miraie.in:8883 (SSL)
  */
 
 import {
@@ -19,9 +14,6 @@ import {
 const MIRAIE_AUTH_BASE_URL = 'https://auth.miraie.in/simplifi/v1';
 const MIRAIE_APP_BASE_URL = 'https://app.miraie.in/simplifi/v1';
 const MIRAIE_CLIENT_ID = 'PBcMcfG19njNCL8AOgvRzIC8AjQa';
-
-let cachedToken: string | null = null;
-let tokenExpiry: number = 0;
 
 /**
  * Authenticate with MirAIe API
@@ -60,38 +52,14 @@ export async function login(
   }
 
   const data = await response.json();
-  cachedToken = data.accessToken;
-  tokenExpiry = Date.now() + 6 * 24 * 60 * 60 * 1000;
   console.log('[MirAIe] Login successful');
-
   return data as MirAIeLoginResponse;
 }
 
 /**
- * Get a valid access token
+ * Fetch all homes and devices using a provided token
  */
-async function getAccessToken(): Promise<string> {
-  const userId = process.env.MIRAIE_USER_ID;
-  const password = process.env.MIRAIE_PASSWORD;
-
-  if (!userId || !password) {
-    throw new Error('MIRAIE_USER_ID and MIRAIE_PASSWORD must be set in environment');
-  }
-
-  if (cachedToken && Date.now() < tokenExpiry) {
-    return cachedToken;
-  }
-
-  const result = await login(userId, password);
-  return result.accessToken;
-}
-
-/**
- * Fetch all homes and devices
- */
-export async function fetchHomes(): Promise<MirAIeHome[]> {
-  const token = await getAccessToken();
-
+export async function fetchHomes(token: string): Promise<MirAIeHome[]> {
   console.log('[MirAIe] Fetching homes...');
 
   const response = await fetch(`${MIRAIE_APP_BASE_URL}/homeManagement/homes`, {
@@ -102,19 +70,6 @@ export async function fetchHomes(): Promise<MirAIeHome[]> {
   });
 
   if (!response.ok) {
-    if (response.status === 401) {
-      console.log('[MirAIe] Token expired, refreshing...');
-      cachedToken = null;
-      const newToken = await getAccessToken();
-      const retryResponse = await fetch(
-        `${MIRAIE_APP_BASE_URL}/homeManagement/homes`,
-        { headers: { Authorization: `Bearer ${newToken}` } }
-      );
-      if (!retryResponse.ok) {
-        throw new Error(`Failed to fetch homes after retry: ${retryResponse.status}`);
-      }
-      return retryResponse.json();
-    }
     throw new Error(`Failed to fetch homes: ${response.status}`);
   }
 
@@ -122,10 +77,10 @@ export async function fetchHomes(): Promise<MirAIeHome[]> {
 }
 
 /**
- * Get all devices
+ * Get all devices using a provided token
  */
-export async function fetchDevices(): Promise<MirAIeDevice[]> {
-  const homes = await fetchHomes();
+export async function fetchDevices(token: string): Promise<MirAIeDevice[]> {
+  const homes = await fetchHomes(token);
   const devices: MirAIeDevice[] = [];
 
   for (const home of homes) {
@@ -142,30 +97,20 @@ export async function fetchDevices(): Promise<MirAIeDevice[]> {
     }
   }
 
-  console.log(`[MirAIe] Found ${devices.length} device(s)`);
-  devices.forEach((d) =>
-    console.log(`  - ${d.spaceName}: ${d.deviceName} (${d.deviceId})`)
-  );
-
   return devices;
 }
 
 /**
- * Send command to device via MQTT (serverless-friendly: connect, send, disconnect)
+ * Send command to device
  */
 export async function sendCommand(
+  token: string,
   deviceId: string,
   topic: string,
   command: ACCommand
 ): Promise<boolean> {
-  const token = await getAccessToken();
   const topicStr = Array.isArray(topic) ? topic[0] : topic;
 
-  console.log(`[MirAIe] Sending command to ${deviceId}:`, command);
-
-  // MirAIe uses MQTT for device control
-  // For serverless, we use the HTTP control endpoint if available
-  // Otherwise, the MQTT bridge handles it
   try {
     const response = await fetch(
       `${MIRAIE_APP_BASE_URL}/deviceManagement/devices/${deviceId}/control`,
@@ -182,15 +127,9 @@ export async function sendCommand(
       }
     );
 
-    if (response.ok) {
-      console.log('[MirAIe] Command sent via HTTP API');
-      return true;
-    }
-
-    console.log('[MirAIe] HTTP API not available, MQTT bridge required');
-    return false;
+    return response.ok;
   } catch (error) {
-    console.log('[MirAIe] HTTP control failed, use MQTT bridge:', error);
+    console.log('[MirAIe] HTTP control failed:', error);
     return false;
   }
 }
@@ -249,7 +188,6 @@ export function mapCommandToPayload(
 
 /**
  * Parse device state from MQTT payload
- * Maps MirAIe MQTT fields to our ACState
  */
 export function parseDeviceState(
   payload: Record<string, unknown>
