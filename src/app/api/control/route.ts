@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sendCommand, fetchDevices } from '@/lib/miraie-api';
+import { fetchDevices } from '@/lib/miraie-api';
 import { ACCommand } from '@/lib/types';
 
 /**
