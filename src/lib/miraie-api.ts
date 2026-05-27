@@ -33,7 +33,7 @@ export async function fetchEnergyData(token: string, deviceId: string) {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   if (!response.ok) return null;
-  return response.json(); // Returns day/month/year consumption
+  return response.json();
 }
 
 /**
@@ -42,21 +42,53 @@ export async function fetchEnergyData(token: string, deviceId: string) {
 export function mapCommandToPayload(command: any) {
   const payload: any = {};
   
-  // Power & Basic Modes
   if (command.power !== undefined) payload.power = command.power ? 1 : 0;
   if (command.temperature !== undefined) payload.temperature = command.temperature;
+  if (command.mode !== undefined) {
+    const modes: any = { cool: 0, dry: 1, fan: 2, heat: 3, auto: 4 };
+    payload.mode = modes[command.mode] ?? 0;
+  }
   
-  // Advanced Modes (Powerful, Eco, AI)
   if (command.preset !== undefined) {
     const presetMap: any = { 'none': 0, 'powerful': 1, 'eco': 2, 'ai': 3 };
     payload.presetMode = presetMap[command.preset] ?? 0;
   }
 
-  // Converti7 (7-in-1 Cooling)
+  // Converti7 (Official QU-Series Mapping)
   if (command.convertiMode !== undefined) {
-    const convertMap: any = { 'off': 0, '40': 1, '55': 2, '70': 3, '80': 4, '90': 5, '100': 6, 'fc': 7, 'hc': 8 };
+    const convertMap: any = { 
+      'off': 0, 
+      '40': 1, 
+      '55': 2, 
+      '70': 3, 
+      '80': 4, 
+      '90': 5, 
+      '100': 6, 
+      'hc': 7 
+    };
     payload.convertiMode = convertMap[command.convertiMode] ?? 0;
   }
 
   return payload;
+}
+
+export function parseDeviceState(device: any): any {
+  const status = device.status || {};
+  
+  const modes: any = { 0: 'cool', 1: 'dry', 2: 'fan', 3: 'heat', 4: 'auto' };
+  const presets: any = { 0: 'none', 1: 'powerful', 2: 'eco', 3: 'ai' };
+  const converts: any = { 0: 'off', 1: '40', 2: '55', 3: '70', 4: '80', 5: '90', 6: '100', 7: 'hc' };
+
+  return {
+    power: status.power === 1,
+    mode: modes[status.mode] ?? 'cool',
+    temperature: status.temperature ?? 24,
+    fanSpeed: status.fanSpeed?.toString() ?? 'auto',
+    preset: presets[status.presetMode] ?? 'none',
+    convertiMode: converts[status.convertiMode] ?? 'off',
+    roomTemperature: status.roomTemperature ?? 0,
+    humidity: status.humidity ?? 0,
+    online: device.online !== false,
+    lastUpdated: new Date().toISOString(),
+  };
 }
