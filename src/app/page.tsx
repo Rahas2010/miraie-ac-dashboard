@@ -56,7 +56,7 @@ export default function Dashboard() {
       const data = await res.json();
       if (data.authenticated) {
         setIsAuthenticated(true);
-        fetchDevices();
+        fetchDevicesInternal();
       }
     } catch {
       setIsAuthenticated(false);
@@ -70,7 +70,7 @@ export default function Dashboard() {
   }, [checkAuth]);
 
   // --- Device Management ---
-  const fetchDevices = async () => {
+  const fetchDevicesInternal = async () => {
     setIsLoading(true);
     setError(null);
     try {
@@ -113,11 +113,14 @@ export default function Dashboard() {
   }, [selectedDeviceId, pollStatus]);
 
   // --- Handlers ---
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
-    const formData = new FormData(e.currentTarget);
+    
+    // Explicitly cast currentTarget as HTMLFormElement for TypeScript
+    const form = e.currentTarget;
+    const formData = new FormData(form);
     const userId = formData.get('userId');
     const password = formData.get('password');
 
@@ -130,7 +133,7 @@ export default function Dashboard() {
       const data = await res.json();
       if (res.ok) {
         setIsAuthenticated(true);
-        fetchDevices();
+        fetchDevicesInternal();
       } else {
         setError(data.error || 'Login failed');
       }
@@ -211,7 +214,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-8">
             <h1 className="text-2xl font-bold text-slate-900">My Devices</h1>
             <div className="flex gap-2">
-              <button onClick={fetchDevices} className="btn-icon bg-white shadow-sm">
+              <button onClick={fetchDevicesInternal} className="btn-icon bg-white shadow-sm">
                 <RefreshCw size={20} />
               </button>
               <button onClick={handleLogout} className="btn-icon bg-white shadow-sm text-red-500">
