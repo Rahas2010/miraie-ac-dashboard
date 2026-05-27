@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { fetchDevices, getDevices } from '@/lib/miraie-api';
+import { fetchDevices } from '@/lib/miraie-api';
 import { getCachedAuth } from '@/lib/auth-state';
 
 /**

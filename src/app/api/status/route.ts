@@ -11,7 +11,9 @@ const statusCache: Map<
   }
 > = new Map();
 
-const STATUS_CACHE_TTL = 30000; // 30 seconds
+const STATUS_CACHE_TTL = 10000; // 10 seconds
+
+const BRIDGE_URL = process.env.NEXT_PUBLIC_MQTT_BRIDGE_URL?.replace('ws://', 'http://').replace('wss://', 'https://') || 'http://localhost:3001';
 
 /**
  * GET /api/status?deviceId=xxx - Get device status
@@ -27,7 +29,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Check cache
+  // 1. Check local memory cache first
   const cached = statusCache.get(deviceId);
   if (cached && Date.now() - cached.timestamp < STATUS_CACHE_TTL) {
     return NextResponse.json({
@@ -38,7 +40,35 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Check auth
+  // 2. Try to fetch real-time state from MQTT bridge if available
+  try {
+    const bridgeRes = await fetch(`${BRIDGE_URL}/devices`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    
+    if (bridgeRes.ok) {
+      const bridgeData = await bridgeRes.json();
+      if (bridgeData.states && bridgeData.states[deviceId]) {
+        const realState = parseDeviceState(bridgeData.states[deviceId]);
+        
+        statusCache.set(deviceId, {
+          state: realState as Record<string, unknown>,
+          timestamp: Date.now(),
+        });
+
+        return NextResponse.json({
+          deviceId,
+          state: realState,
+          source: 'mqtt-bridge',
+        });
+      }
+    }
+  } catch (err) {
+    // Bridge not available, fall back to mock or previous cache
+    console.log('Bridge not available for status fetch, using fallback');
+  }
+
+  // 3. Fallback: Check auth
   const auth = getCachedAuth();
   if (!auth && !process.env.MIRAIE_USER_ID) {
     return NextResponse.json(
@@ -47,10 +77,11 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // For status, we return cached/mock state
-  // Real-time status comes via the MQTT bridge
+  // Final Fallback: Return mock state if nothing else works
+  // In a real production app, you might want to throw an error here
+  // but for this dashboard, we show a mock to keep the UI interactive.
   const mockState = {
-    power: true,
+    power: false,
     mode: 'cool',
     temperature: 24,
     fanSpeed: 'auto',
@@ -62,12 +93,6 @@ export async function GET(request: NextRequest) {
     online: true,
     lastUpdated: new Date().toISOString(),
   };
-
-  // Update cache
-  statusCache.set(deviceId, {
-    state: mockState,
-    timestamp: Date.now(),
-  });
 
   return NextResponse.json({
     deviceId,

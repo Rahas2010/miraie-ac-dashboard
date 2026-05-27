@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { login } from '@/lib/miraie-api';
-import { getCachedAuth, setCachedAuth } from '@/lib/auth-state';
+import { getCachedAuth, setCachedAuth, clearCachedAuth } from '@/lib/auth-state';
 
 /**
- * GET /api/auth - Check authentication status
+ * GET /api/auth - Check current session status
  */
 export async function GET() {
   const auth = getCachedAuth();
@@ -13,27 +13,11 @@ export async function GET() {
       userId: auth.userId,
     });
   }
-
-  // Check if env vars are configured
-  const userId = process.env.MIRAIE_USER_ID;
-  if (userId && process.env.MIRAIE_PASSWORD) {
-    try {
-      const result = await login(userId, process.env.MIRAIE_PASSWORD);
-      setCachedAuth(userId, result.accessToken);
-      return NextResponse.json({ authenticated: true, userId });
-    } catch (error) {
-      return NextResponse.json({
-        authenticated: false,
-        error: error instanceof Error ? error.message : 'Login failed',
-      });
-    }
-  }
-
   return NextResponse.json({ authenticated: false });
 }
 
 /**
- * POST /api/auth - Login with credentials
+ * POST /api/auth - Login with MirAIe credentials
  */
 export async function POST(request: NextRequest) {
   try {
@@ -42,12 +26,15 @@ export async function POST(request: NextRequest) {
 
     if (!userId || !password) {
       return NextResponse.json(
-        { error: 'User ID and password are required' },
+        { error: 'Email/Mobile and Password are required' },
         { status: 400 }
       );
     }
 
+    // Attempt to login to Panasonic servers
     const result = await login(userId, password);
+    
+    // Store in memory (server-side)
     setCachedAuth(userId, result.accessToken);
 
     return NextResponse.json({
@@ -57,10 +44,16 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Login error:', error);
     return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : 'Login failed',
-      },
+      { error: error instanceof Error ? error.message : 'Login failed. Please check your credentials.' },
       { status: 401 }
     );
   }
+}
+
+/**
+ * DELETE /api/auth - Logout
+ */
+export async function DELETE() {
+  clearCachedAuth();
+  return NextResponse.json({ authenticated: false });
 }
