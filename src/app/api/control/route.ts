@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Find the device to get its topic
-    const devices = await fetchevices();
+    const devices = await fetchDevices();
     const device = devices.find((d) => d.deviceId === deviceId);
 
     if (!device) {
