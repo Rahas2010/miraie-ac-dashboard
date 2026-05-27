@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sendCommand, getDevices } from '@/lib/miraie-api';
+import { sendCommand, fetchDevices } from '@/lib/miraie-api';
 import { ACCommand } from '@/lib/types';
 
 /**
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Find the device to get its topic
-    const devices = await getDevices();
+    const devices = await fetchevices();
     const device = devices.find((d) => d.deviceId === deviceId);
 
     if (!device) {
