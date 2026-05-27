@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchDevices } from '@/lib/miraie-api';
 import { ACCommand } from '@/lib/types';
+import { sendCommand } from '@/lib/miraie-api';
 
 /**
  * POST /api/control - Send a command to an AC device
