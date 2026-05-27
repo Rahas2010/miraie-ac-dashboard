@@ -1,12 +1,12 @@
 import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
 import './globals.css';
 
+const inter = Inter({ subsets: ['latin'] });
+
 export const metadata: Metadata = {
-  title: 'MirAIe AC Dashboard',
-  description: 'Control your Panasonic air conditioner from anywhere',
-  icons: {
-    icon: '/favicon.ico',
-  },
+  title: 'Smart Home Dashboard',
+  description: 'Control your AC and smart home devices from a single dashboard.',
 };
 
 export default function RootLayout({
@@ -16,15 +16,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-        <meta name="theme-color" content="#f8fafc" />
-      </head>
-      <body className="antialiased">
-        <div className="min-h-screen">
-          {children}
-        </div>
-      </body>
+      <body className={inter.className}>{children}</body>
     </html>
   );
 }
