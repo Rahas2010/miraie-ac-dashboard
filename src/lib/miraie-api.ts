@@ -1,6 +1,11 @@
 /**
  * Panasonic MirAIe API Client
  * Handles authentication, device management, and AC control
+ * 
+ * Real endpoints discovered from community reverse-engineering:
+ * - Auth: https://auth.miraie.in/simplifi/v1/userManagement/login
+ * - App:  https://app.miraie.in/simplifi/v1/homeManagement/homes
+ * - MQTT: mqtt.miraie.in:8883 (SSL)
  */
 
 import {
@@ -17,7 +22,6 @@ const MIRAIE_CLIENT_ID = 'PBcMcfG19njNCL8AOgvRzIC8AjQa';
 
 let cachedToken: string | null = null;
 let tokenExpiry: number = 0;
-let cachedDevices: MirAIeDevice[] = [];
 
 /**
  * Authenticate with MirAIe API
@@ -31,8 +35,8 @@ export async function login(
 
   const payload: Record<string, string> = {
     clientId: MIRAIE_CLIENT_ID,
-    password: password,
-    scope: scope,
+    password,
+    scope,
   };
 
   if (isEmail) {
@@ -41,35 +45,37 @@ export async function login(
     payload.mobile = userId;
   }
 
+  console.log(`[MirAIe] Logging in as ${userId}...`);
+
   const response = await fetch(`${MIRAIE_AUTH_BASE_URL}/userManagement/login`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
+    console.error(`[MirAIe] Login failed: ${response.status} - ${errorText}`);
     throw new Error(`Login failed (${response.status}): ${errorText}`);
   }
 
   const data = await response.json();
   cachedToken = data.accessToken;
-  tokenExpiry = Date.now() + 6 * 24 * 60 * 60 * 1000; // 6 days
+  tokenExpiry = Date.now() + 6 * 24 * 60 * 60 * 1000;
+  console.log('[MirAIe] Login successful');
 
   return data as MirAIeLoginResponse;
 }
 
 /**
- * Get a valid access token (login if needed)
+ * Get a valid access token
  */
 async function getAccessToken(): Promise<string> {
   const userId = process.env.MIRAIE_USER_ID;
   const password = process.env.MIRAIE_PASSWORD;
 
   if (!userId || !password) {
-    throw new Error('MirAIe credentials not configured');
+    throw new Error('MIRAIE_USER_ID and MIRAIE_PASSWORD must be set in environment');
   }
 
   if (cachedToken && Date.now() < tokenExpiry) {
@@ -86,27 +92,26 @@ async function getAccessToken(): Promise<string> {
 export async function fetchHomes(): Promise<MirAIeHome[]> {
   const token = await getAccessToken();
 
+  console.log('[MirAIe] Fetching homes...');
+
   const response = await fetch(`${MIRAIE_APP_BASE_URL}/homeManagement/homes`, {
     headers: {
       Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
     },
   });
 
   if (!response.ok) {
     if (response.status === 401) {
-      // Token expired, retry login
+      console.log('[MirAIe] Token expired, refreshing...');
       cachedToken = null;
       const newToken = await getAccessToken();
       const retryResponse = await fetch(
         `${MIRAIE_APP_BASE_URL}/homeManagement/homes`,
-        {
-          headers: {
-            Authorization: `Bearer ${newToken}`,
-          },
-        }
+        { headers: { Authorization: `Bearer ${newToken}` } }
       );
       if (!retryResponse.ok) {
-        throw new Error(`Failed to fetch homes: ${retryResponse.status}`);
+        throw new Error(`Failed to fetch homes after retry: ${retryResponse.status}`);
       }
       return retryResponse.json();
     }
@@ -117,7 +122,7 @@ export async function fetchHomes(): Promise<MirAIeHome[]> {
 }
 
 /**
- * Get all devices from all homes
+ * Get all devices
  */
 export async function fetchDevices(): Promise<MirAIeDevice[]> {
   const homes = await fetchHomes();
@@ -137,23 +142,16 @@ export async function fetchDevices(): Promise<MirAIeDevice[]> {
     }
   }
 
-  cachedDevices = devices;
+  console.log(`[MirAIe] Found ${devices.length} device(s)`);
+  devices.forEach((d) =>
+    console.log(`  - ${d.spaceName}: ${d.deviceName} (${d.deviceId})`)
+  );
+
   return devices;
 }
 
 /**
- * Get cached devices or fetch fresh
- */
-export async function getDevices(): Promise<MirAIeDevice[]> {
-  if (cachedDevices.length > 0) {
-    return cachedDevices;
-  }
-  return fetchDevices();
-}
-
-/**
- * Send a command to an AC device via MQTT
- * This is the serverless-friendly approach - connect, send, disconnect
+ * Send command to device via MQTT (serverless-friendly: connect, send, disconnect)
  */
 export async function sendCommand(
   deviceId: string,
@@ -161,14 +159,13 @@ export async function sendCommand(
   command: ACCommand
 ): Promise<boolean> {
   const token = await getAccessToken();
-
-  // The MirAIe platform uses MQTT for control
-  // For serverless environments, we use their HTTP API as a proxy when available
-  // Otherwise, the command is sent via the MQTT bridge
-
   const topicStr = Array.isArray(topic) ? topic[0] : topic;
 
-  // Try HTTP API first (some MirAIe endpoints support HTTP commands)
+  console.log(`[MirAIe] Sending command to ${deviceId}:`, command);
+
+  // MirAIe uses MQTT for device control
+  // For serverless, we use the HTTP control endpoint if available
+  // Otherwise, the MQTT bridge handles it
   try {
     const response = await fetch(
       `${MIRAIE_APP_BASE_URL}/deviceManagement/devices/${deviceId}/control`,
@@ -186,22 +183,24 @@ export async function sendCommand(
     );
 
     if (response.ok) {
+      console.log('[MirAIe] Command sent via HTTP API');
       return true;
     }
-  } catch {
-    // HTTP API might not be available, fall through to MQTT
-  }
 
-  // If HTTP API doesn't work, indicate MQTT bridge is needed
-  throw new Error(
-    'HTTP control not available. Please use the MQTT bridge for device control.'
-  );
+    console.log('[MirAIe] HTTP API not available, MQTT bridge required');
+    return false;
+  } catch (error) {
+    console.log('[MirAIe] HTTP control failed, use MQTT bridge:', error);
+    return false;
+  }
 }
 
 /**
- * Map our command format to MirAIe MQTT payload format
+ * Map command to MirAIe MQTT payload format
  */
-function mapCommandToPayload(command: ACCommand): Record<string, unknown> {
+export function mapCommandToPayload(
+  command: ACCommand
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
 
   if (command.power !== undefined) {
@@ -211,9 +210,9 @@ function mapCommandToPayload(command: ACCommand): Record<string, unknown> {
     const modeMap: Record<string, number> = {
       cool: 0,
       dry: 1,
+      fan: 2,
       heat: 3,
       auto: 4,
-      fan: 2,
       off: 0,
     };
     payload.mode = modeMap[command.mode] ?? 0;
@@ -224,17 +223,25 @@ function mapCommandToPayload(command: ACCommand): Record<string, unknown> {
   if (command.fanSpeed !== undefined) {
     const fanMap: Record<string, number> = {
       auto: 0,
-      low: 1,
-      medium: 2,
-      high: 3,
+      '1': 1,
+      '2': 2,
+      '3': 3,
+      '4': 4,
+      '5': 5,
     };
     payload.fanSpeed = fanMap[command.fanSpeed] ?? 0;
   }
-  if (command.verticalSwing !== undefined) {
-    payload.verticalSwing = command.verticalSwing ? 1 : 0;
+  if (command.verticalSwingPosition !== undefined) {
+    payload.verticalSwing = parseInt(command.verticalSwingPosition);
   }
-  if (command.horizontalSwing !== undefined) {
-    payload.horizontalSwing = command.horizontalSwing ? 1 : 0;
+  if (command.horizontalSwingPosition !== undefined) {
+    payload.horizontalSwing = parseInt(command.horizontalSwingPosition);
+  }
+  if (command.crystalClean !== undefined) {
+    payload.crystalClean = command.crystalClean ? 1 : 0;
+  }
+  if (command.acdc !== undefined) {
+    payload.acdc = command.acdc ? 1 : 0;
   }
 
   return payload;
@@ -242,8 +249,11 @@ function mapCommandToPayload(command: ACCommand): Record<string, unknown> {
 
 /**
  * Parse device state from MQTT payload
+ * Maps MirAIe MQTT fields to our ACState
  */
-export function parseDeviceState(payload: Record<string, unknown>): Partial<ACState> {
+export function parseDeviceState(
+  payload: Record<string, unknown>
+): Partial<ACState> {
   const modeMap: Record<number, ACState['mode']> = {
     0: 'cool',
     1: 'dry',
@@ -266,12 +276,13 @@ export function parseDeviceState(payload: Record<string, unknown>): Partial<ACSt
     mode: modeMap[payload.mode as number] ?? 'auto',
     temperature: (payload.temperature as number) ?? 24,
     fanSpeed: fanMap[payload.fanSpeed as number] ?? 'auto',
-    verticalSwing: (payload.verticalSwing === 1 || payload.verticalSwing === true) as boolean,
-    horizontalSwing: (payload.horizontalSwing === 1 || payload.horizontalSwing === true) as boolean,
-    roomTemperature: payload.roomTemperature as number | undefined,
-    humidity: payload.humidity as number | undefined,
-    airQuality: (payload.airQuality ?? payload.pm25 ?? 0) as number,
+    roomTemperature: (payload.roomTemperature as number) ?? 0,
+    humidity: (payload.humidity as number) ?? 0,
+    verticalSwing: (payload.verticalSwing as number) > 0 || payload.verticalSwing === true,
+    horizontalSwing: (payload.horizontalSwing as number) > 0 || payload.horizontalSwing === true,
+    crystalClean: payload.crystalClean === 1 || payload.crystalClean === true,
+    acdc: payload.acdc !== undefined ? (payload.acdc === 1 || payload.acdc === true) : true,
     online: payload.online !== false,
     lastUpdated: new Date().toISOString(),
-  };
+  } as Partial<ACState>;
 }
