@@ -1,0 +1,16 @@
+{
+  "name": "miraie-mqtt-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MQTT Bridge for Panasonic MirAIe AC Dashboard",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.3.0",
+    "ws": "^8.16.0",
+    "dotenv": "^16.4.0"
+  }
+}
