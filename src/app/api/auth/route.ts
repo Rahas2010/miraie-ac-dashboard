@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { login } from '@/lib/miraie-api';
-
-// In-memory token storage (resets on cold start)
-let cachedAuth: {
-  userId: string;
-  accessToken: string;
-  expiry: number;
-} | null = null;
+import { getCachedAuth, setCachedAuth } from '@/lib/auth-state';
 
 /**
  * GET /api/auth - Check authentication status
  */
 export async function GET() {
-  if (cachedAuth && Date.now() < cachedAuth.expiry) {
+  const auth = getCachedAuth();
+  if (auth) {
     return NextResponse.json({
       authenticated: true,
-      userId: cachedAuth.userId,
+      userId: auth.userId,
     });
   }
 
@@ -24,11 +19,7 @@ export async function GET() {
   if (userId && process.env.MIRAIE_PASSWORD) {
     try {
       const result = await login(userId, process.env.MIRAIE_PASSWORD);
-      cachedAuth = {
-        userId,
-        accessToken: result.accessToken,
-        expiry: Date.now() + 6 * 24 * 60 * 60 * 1000, // 6 days
-      };
+      setCachedAuth(userId, result.accessToken);
       return NextResponse.json({ authenticated: true, userId });
     } catch (error) {
       return NextResponse.json({
@@ -57,17 +48,11 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await login(userId, password);
-
-    cachedAuth = {
-      userId,
-      accessToken: result.accessToken,
-      expiry: Date.now() + 6 * 24 * 60 * 60 * 1000,
-    };
+    setCachedAuth(userId, result.accessToken);
 
     return NextResponse.json({
       authenticated: true,
       userId,
-      accessToken: result.accessToken,
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -78,14 +63,4 @@ export async function POST(request: NextRequest) {
       { status: 401 }
     );
   }
-}
-
-/**
- * Export cached auth for use by other API routes
- */
-export function getCachedAuth() {
-  if (cachedAuth && Date.now() < cachedAuth.expiry) {
-    return cachedAuth;
-  }
-  return null;
 }

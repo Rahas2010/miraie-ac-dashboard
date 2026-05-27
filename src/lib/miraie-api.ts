@@ -230,11 +230,11 @@ function mapCommandToPayload(command: ACCommand): Record<string, unknown> {
     };
     payload.fanSpeed = fanMap[command.fanSpeed] ?? 0;
   }
-  if (command.swingH !== undefined) {
-    payload.swingH = command.swingH ? 1 : 0;
+  if (command.verticalSwing !== undefined) {
+    payload.verticalSwing = command.verticalSwing ? 1 : 0;
   }
-  if (command.swingV !== undefined) {
-    payload.swingV = command.swingV ? 1 : 0;
+  if (command.horizontalSwing !== undefined) {
+    payload.horizontalSwing = command.horizontalSwing ? 1 : 0;
   }
 
   return payload;
@@ -254,9 +254,11 @@ export function parseDeviceState(payload: Record<string, unknown>): Partial<ACSt
 
   const fanMap: Record<number, ACState['fanSpeed']> = {
     0: 'auto',
-    1: 'low',
-    2: 'medium',
-    3: 'high',
+    1: '1',
+    2: '2',
+    3: '3',
+    4: '4',
+    5: '5',
   };
 
   return {
@@ -264,10 +266,11 @@ export function parseDeviceState(payload: Record<string, unknown>): Partial<ACSt
     mode: modeMap[payload.mode as number] ?? 'auto',
     temperature: (payload.temperature as number) ?? 24,
     fanSpeed: fanMap[payload.fanSpeed as number] ?? 'auto',
-    swingH: payload.swingH === 1 || payload.swingH === true,
-    swingV: payload.swingV === 1 || payload.swingV === true,
+    verticalSwing: (payload.verticalSwing === 1 || payload.verticalSwing === true) as boolean,
+    horizontalSwing: (payload.horizontalSwing === 1 || payload.horizontalSwing === true) as boolean,
     roomTemperature: payload.roomTemperature as number | undefined,
     humidity: payload.humidity as number | undefined,
+    airQuality: (payload.airQuality ?? payload.pm25 ?? 0) as number,
     online: payload.online !== false,
     lastUpdated: new Date().toISOString(),
   };

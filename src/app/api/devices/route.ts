@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchDevices, getDevices } from '@/lib/miraie-api';
-import { getCachedAuth } from '../auth/route';
+import { getCachedAuth } from '@/lib/auth-state';
 
 /**
  * GET /api/devices - Get all MirAIe devices

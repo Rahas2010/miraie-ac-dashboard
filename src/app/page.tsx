@@ -1,32 +1,19 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Thermometer,
-  Power,
-  Wind,
-  Droplets,
-  Settings,
-  BarChart3,
-  Clock,
-  Mic,
-  Wifi,
-  WifiOff,
-  RefreshCw,
-  Plus,
-  Minus,
-  Snowflake,
-  Flame,
-  Fan,
-  Gauge,
-  Zap,
-  Leaf,
+  Thermometer, Power, Wind, Droplets, Settings, BarChart3,
+  Clock, Mic, Wifi, WifiOff, RefreshCw, Plus, Minus,
+  Snowflake, Flame, Fan, Gauge, Zap, Leaf, Sun, Moon,
+  ChevronDown, ChevronUp, Activity, Shield, Eye, EyeOff,
+  Timer, Play, Pause, Trash2, Edit3, Volume2
 } from 'lucide-react';
 
-// Types
+// ========== TYPES ==========
 type ACMode = 'cool' | 'heat' | 'dry' | 'auto' | 'fan' | 'off';
-type FanSpeed = 'auto' | 'low' | 'medium' | 'high';
-type ACPreset = 'none' | 'nanoe' | 'powerful' | 'economy';
+type FanSpeed = 'auto' | '1' | '2' | '3' | '4' | '5';
+type ACPreset = 'none' | 'nanoe' | 'powerful' | 'economy' | 'clean' | 'sleep' | 'comfort';
+type ConvertiMode = 'off' | '40' | '55' | '70' | '80' | '90' | '100' | 'fc' | 'hc';
 type Tab = 'control' | 'schedule' | 'stats' | 'settings';
 
 interface ACState {
@@ -35,12 +22,18 @@ interface ACState {
   temperature: number;
   fanSpeed: FanSpeed;
   preset: ACPreset;
-  swingH: boolean;
-  swingV: boolean;
+  convertiMode: ConvertiMode;
+  verticalSwing: boolean;
+  horizontalSwing: boolean;
+  nanoeG: boolean;
+  acdc: boolean;
   roomTemperature: number;
   humidity: number;
+  airQuality: number;
   online: boolean;
   lastUpdated: string;
+  firmwareVersion?: string;
+  modelName?: string;
 }
 
 interface Device {
@@ -49,6 +42,7 @@ interface Device {
   spaceName: string;
 }
 
+// ========== MAIN PAGE ==========
 export default function Dashboard() {
   // State
   const [activeTab, setActiveTab] = useState<Tab>('control');
@@ -57,36 +51,41 @@ export default function Dashboard() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [devices, setDevices] = useState<Device[]>([]);
-  const [selectedDevice, setSelectedDevice] = useState<string>('');
+  const [selectedDevice, setSelectedDevice] = useState('');
+  const [showConverti, setShowConverti] = useState(false);
+  const [showFanSlider, setShowFanSlider] = useState(false);
+  const fanSliderRef = useRef<HTMLDivElement>(null);
+
   const [acState, setAcState] = useState<ACState>({
     power: false,
     mode: 'cool',
-    temperature: 24,
-    fanSpeed: 'auto',
+    temperature: 26,
+    fanSpeed: '3',
     preset: 'none',
-    swingH: false,
-    swingV: false,
-    roomTemperature: 28,
+    convertiMode: 'off',
+    verticalSwing: false,
+    horizontalSwing: false,
+    nanoeG: false,
+    acdc: true,
+    roomTemperature: 25,
     humidity: 65,
+    airQuality: 97,
     online: true,
     lastUpdated: new Date().toISOString(),
+    firmwareVersion: 'v2.1.3',
+    modelName: 'CS/CU-PU18VKY',
   });
 
-  // Schedule state
-  const [schedules, setSchedules] = useState<
-    Array<{
-      id: string;
-      time: string;
-      days: number[];
-      command: Partial<ACState>;
-      enabled: boolean;
-      label: string;
-    }>
-  >([]);
-
-  // Login form state
-  const [loginForm, setLoginForm] = useState({ userId: '', password: '' });
-  const [loginLoading, setLoginLoading] = useState(false);
+  // Close fan slider when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (fanSliderRef.current && !fanSliderRef.current.contains(event.target as Node)) {
+        setShowFanSlider(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Fetch devices
   const fetchDevices = useCallback(async () => {
@@ -120,7 +119,7 @@ export default function Dashboard() {
     }
   }, [selectedDevice]);
 
-  // Check auth status on mount
+  // Check auth on mount
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -128,9 +127,7 @@ export default function Dashboard() {
         if (res.ok) {
           const data = await res.json();
           setIsAuthenticated(data.authenticated);
-          if (data.authenticated) {
-            fetchDevices();
-          }
+          if (data.authenticated) fetchDevices();
         }
       } catch {
         setIsAuthenticated(false);
@@ -141,7 +138,7 @@ export default function Dashboard() {
     checkAuth();
   }, [fetchDevices]);
 
-  // Poll status every 30 seconds
+  // Poll every 30s
   useEffect(() => {
     if (isAuthenticated && selectedDevice) {
       pollStatus();
@@ -150,19 +147,17 @@ export default function Dashboard() {
     }
   }, [isAuthenticated, selectedDevice, pollStatus]);
 
-  // Login handler
+  // Login
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoginLoading(true);
+    setIsLoading(true);
     setError(null);
-
     try {
       const res = await fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(loginForm),
+        body: JSON.stringify({ userId: (e.target as HTMLFormElement).userId.value, password: (e.target as HTMLFormElement).password.value }),
       });
-
       if (res.ok) {
         setIsAuthenticated(true);
         fetchDevices();
@@ -171,33 +166,25 @@ export default function Dashboard() {
         setError(data.error || 'Login failed');
       }
     } catch {
-      setError('Connection failed. Please try again.');
+      setError('Connection failed');
     } finally {
-      setLoginLoading(false);
+      setIsLoading(false);
     }
   };
 
-  // Send AC command
+  // Send command
   const sendCommand = async (command: Partial<ACState>) => {
     if (!selectedDevice) return;
     setIsSending(true);
     setError(null);
-
     try {
       const res = await fetch('/api/control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceId: selectedDevice,
-          command,
-        }),
+        body: JSON.stringify({ deviceId: selectedDevice, command }),
       });
-
       if (res.ok) {
         setAcState((prev) => ({ ...prev, ...command }));
-      } else {
-        const data = await res.json();
-        setError(data.error || 'Command failed');
       }
     } catch {
       setError('Failed to send command');
@@ -208,89 +195,81 @@ export default function Dashboard() {
 
   // Toggle power
   const togglePower = () => {
-    const newPower = !acState.power;
-    sendCommand({
-      power: newPower,
-      mode: newPower ? (acState.mode === 'off' ? 'cool' : acState.mode) : 'off',
-    });
-  };
-
-  // Temperature controls
-  const increaseTemp = () => {
-    if (acState.temperature < 30) {
-      sendCommand({ temperature: acState.temperature + 1 });
+    if (acState.power) {
+      sendCommand({ power: false, mode: 'off' });
+    } else {
+      sendCommand({ power: true, mode: acState.mode === 'off' ? 'cool' : acState.mode });
     }
   };
 
-  const decreaseTemp = () => {
-    if (acState.temperature > 16) {
-      sendCommand({ temperature: acState.temperature - 1 });
+  // Helpers
+  const getAirQualityLabel = (pm25: number) => {
+    if (pm25 <= 12) return { label: 'Good', color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200' };
+    if (pm25 <= 35) return { label: 'Moderate', color: 'text-yellow-600', bg: 'bg-yellow-50', border: 'border-yellow-200' };
+    if (pm25 <= 55) return { label: 'Unhealthy for Sensitive', color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200' };
+    if (pm25 <= 150) return { label: 'Unhealthy', color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200' };
+    return { label: 'Very Unhealthy', color: 'text-purple-600', bg: 'bg-purple-50', border: 'border-purple-200' };
+  };
+
+  const getModeIcon = (mode: ACMode) => {
+    switch (mode) {
+      case 'cool': return <Snowflake size={18} />;
+      case 'heat': return <Flame size={18} />;
+      case 'dry': return <Droplets size={18} />;
+      case 'auto': return <Gauge size={18} />;
+      case 'fan': return <Fan size={18} />;
+      default: return <Wind size={18} />;
     }
   };
 
-  // Mode config
-  const modes: { value: ACMode; label: string; icon: React.ReactNode; color: string }[] = [
-    { value: 'cool', label: 'Cool', icon: <Snowflake size={18} />, color: 'text-blue-500 bg-blue-50 border-blue-200' },
-    { value: 'heat', label: 'Heat', icon: <Flame size={18} />, color: 'text-orange-500 bg-orange-50 border-orange-200' },
-    { value: 'dry', label: 'Dry', icon: <Droplets size={18} />, color: 'text-teal-500 bg-teal-50 border-teal-200' },
-    { value: 'auto', label: 'Auto', icon: <Gauge size={18} />, color: 'text-purple-500 bg-purple-50 border-purple-200' },
-    { value: 'fan', label: 'Fan', icon: <Fan size={18} />, color: 'text-slate-500 bg-slate-50 border-slate-200' },
-  ];
-
-  // Fan speed config
-  const fanSpeeds: { value: FanSpeed; label: string }[] = [
-    { value: 'auto', label: 'Auto' },
-    { value: 'low', label: 'Low' },
-    { value: 'medium', label: 'Med' },
-    { value: 'high', label: 'High' },
-  ];
-
-  // Preset config
-  const presets: { value: ACPreset; label: string; icon: React.ReactNode; desc: string }[] = [
-    { value: 'none', label: 'None', icon: <Minus size={16} />, desc: 'Standard mode' },
-    { value: 'nanoe', label: 'Nanoe G', icon: <Leaf size={16} />, desc: 'Air purification' },
-    { value: 'powerful', label: 'Powerful', icon: <Zap size={16} />, desc: 'Maximum cooling' },
-    { value: 'economy', label: 'Eco', icon: <Leaf size={16} />, desc: 'Energy saving' },
-  ];
-
-  // Get gradient based on mode
-  const getModeGradient = () => {
-    if (!acState.power) return 'from-slate-100 to-slate-50';
-    switch (acState.mode) {
-      case 'cool': return 'from-blue-50 to-sky-50';
-      case 'heat': return 'from-orange-50 to-amber-50';
-      case 'dry': return 'from-teal-50 to-cyan-50';
-      case 'auto': return 'from-purple-50 to-violet-50';
-      case 'fan': return 'from-slate-100 to-gray-50';
-      default: return 'from-slate-100 to-slate-50';
+  const getModeColor = (mode: ACMode) => {
+    switch (mode) {
+      case 'cool': return 'from-blue-500 to-sky-400';
+      case 'heat': return 'from-orange-500 to-amber-400';
+      case 'dry': return 'from-teal-500 to-cyan-400';
+      case 'auto': return 'from-purple-500 to-violet-400';
+      case 'fan': return 'from-slate-500 to-gray-400';
+      default: return 'from-slate-400 to-slate-300';
     }
   };
 
-  // Loading screen
+  const convertiOptions: { value: ConvertiMode; label: string }[] = [
+    { value: 'off', label: 'Off' },
+    { value: '40', label: '40%' },
+    { value: '55', label: '55%' },
+    { value: '70', label: '70%' },
+    { value: '80', label: '80%' },
+    { value: '90', label: '90%' },
+    { value: '100', label: '100%' },
+    { value: 'fc', label: 'FC' },
+    { value: 'hc', label: 'HC' },
+  ];
+
+  // ========== LOADING ==========
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
         <div className="text-center animate-fade-in">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-miraie-400 to-miraie-600 flex items-center justify-center animate-pulse">
             <Wind className="text-white" size={28} />
           </div>
-          <p className="text-slate-500 font-medium">Loading MirAIe Dashboard...</p>
+          <p className="text-slate-500 font-medium">Loading MirAIe...</p>
         </div>
       </div>
     );
   }
 
-  // Login screen
+  // ========== LOGIN ==========
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="w-full max-w-md animate-scale-in">
+      <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-50 via-white to-blue-50">
+        <div className="w-full max-w-sm animate-scale-in">
           <div className="text-center mb-8">
             <div className="w-20 h-20 mx-auto mb-6 rounded-3xl bg-gradient-to-br from-miraie-400 to-miraie-600 flex items-center justify-center shadow-lg shadow-miraie-500/25">
               <Wind className="text-white" size={36} />
             </div>
             <h1 className="text-2xl font-bold text-slate-900">MirAIe Dashboard</h1>
-            <p className="text-slate-500 mt-2">Sign in with your Panasonic MirAIe account</p>
+            <p className="text-slate-500 mt-2">Sign in with your MirAIe account</p>
           </div>
 
           <form onSubmit={handleLogin} className="glass-card p-8 space-y-5">
@@ -299,55 +278,32 @@ export default function Dashboard() {
                 {error}
               </div>
             )}
-
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Email or Mobile
-              </label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Email or Mobile</label>
               <input
+                name="userId"
                 type="text"
                 className="input-field"
-                placeholder="your@email.com or +91xxxxxxxxxx"
-                value={loginForm.userId}
-                onChange={(e) =>
-                  setLoginForm((prev) => ({ ...prev, userId: e.target.value }))
-                }
+                placeholder="your@email.com"
                 required
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Password
-              </label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Password</label>
               <input
+                name="password"
                 type="password"
                 className="input-field"
-                placeholder="Your MirAIe password"
-                value={loginForm.password}
-                onChange={(e) =>
-                  setLoginForm((prev) => ({ ...prev, password: e.target.value }))
-                }
+                placeholder="••••••••"
                 required
               />
             </div>
-
-            <button
-              type="submit"
-              disabled={loginLoading}
-              className="btn-primary w-full flex items-center justify-center gap-2"
-            >
-              {loginLoading ? (
-                <RefreshCw className="animate-spin" size={18} />
-              ) : (
-                <Power size={18} />
-              )}
-              {loginLoading ? 'Signing in...' : 'Sign In'}
+            <button type="submit" disabled={isLoading} className="btn-primary w-full flex items-center justify-center gap-2">
+              {isLoading ? <RefreshCw className="animate-spin" size={18} /> : <Power size={18} />}
+              {isLoading ? 'Signing in...' : 'Sign In'}
             </button>
-
             <p className="text-xs text-slate-400 text-center">
-              Your credentials are sent directly to Panasonic's servers.
-              We never store them.
+              Credentials are sent directly to Panasonic. We never store them.
             </p>
           </form>
         </div>
@@ -355,52 +311,45 @@ export default function Dashboard() {
     );
   }
 
-  // Main dashboard
+  // ========== MAIN DASHBOARD ==========
   return (
-    <div className="min-h-screen pb-20 md:pb-0">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
       {/* Header */}
       <header className="sticky top-0 z-50 glass-card border-0 border-b border-slate-200/60 rounded-none">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6">
+          <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-miraie-400 to-miraie-600 flex items-center justify-center">
-                <Wind className="text-white" size={18} />
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-miraie-400 to-miraie-600 flex items-center justify-center">
+                <Wind className="text-white" size={16} />
               </div>
-              <div>
-                <h1 className="text-lg font-semibold text-slate-900">MirAIe</h1>
-              </div>
+              <h1 className="text-base font-semibold text-slate-900">MirAIe</h1>
             </div>
-
             <div className="flex items-center gap-2">
-              {/* Connection status */}
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100">
-                {acState.online ? (
-                  <>
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="text-xs font-medium text-emerald-700">Online</span>
-                  </>
-                ) : (
-                  <>
-                    <div className="w-2 h-2 rounded-full bg-red-500" />
-                    <span className="text-xs font-medium text-red-700">Offline</span>
-                  </>
-                )}
-              </div>
-
+              {acState.online ? (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-xs font-medium text-emerald-700">Online</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-50 border border-red-200">
+                  <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                  <span className="text-xs font-medium text-red-700">Offline</span>
+                </div>
+              )}
               <button onClick={pollStatus} className="btn-icon" title="Refresh">
-                <RefreshCw size={18} className="text-slate-500" />
+                <RefreshCw size={16} className="text-slate-400" />
               </button>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
         {/* Device Selector */}
         {devices.length > 1 && (
-          <div className="mb-6 animate-fade-in">
+          <div className="mb-4">
             <select
-              className="input-field max-w-xs"
+              className="input-field max-w-xs text-sm"
               value={selectedDevice}
               onChange={(e) => setSelectedDevice(e.target.value)}
             >
@@ -416,15 +365,15 @@ export default function Dashboard() {
         {/* Tabs */}
         <div className="flex gap-1 p-1 bg-slate-100 rounded-xl mb-6 w-fit animate-fade-in">
           {[
-            { id: 'control' as Tab, label: 'Control', icon: <Thermometer size={16} /> },
-            { id: 'schedule' as Tab, label: 'Schedule', icon: <Clock size={16} /> },
-            { id: 'stats' as Tab, label: 'Stats', icon: <BarChart3 size={16} /> },
-            { id: 'settings' as Tab, label: 'Settings', icon: <Settings size={16} /> },
+            { id: 'control' as Tab, label: 'Control', icon: <Thermometer size={15} /> },
+            { id: 'schedule' as Tab, label: 'Schedule', icon: <Clock size={15} /> },
+            { id: 'stats' as Tab, label: 'Stats', icon: <BarChart3 size={15} /> },
+            { id: 'settings' as Tab, label: 'Settings', icon: <Settings size={15} /> },
           ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
                 activeTab === tab.id
                   ? 'bg-white text-slate-900 shadow-sm'
                   : 'text-slate-500 hover:text-slate-700'
@@ -436,123 +385,98 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Control Tab */}
+        {/* ========== CONTROL TAB ========== */}
         {activeTab === 'control' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 stagger-children">
-            {/* Main AC Control Card */}
-            <div className="lg:col-span-2">
-              <div className={`glass-card p-8 bg-gradient-to-br ${getModeGradient()} transition-all duration-500`}>
-                {/* AC Visualization & Temperature */}
-                <div className="text-center mb-8">
-                  {/* AC Unit Visual */}
-                  <div className={`mx-auto mb-6 ac-unit ${acState.power ? (acState.mode === 'heat' ? 'heating' : 'cooling') : ''}`}>
-                    <div className="flex items-center justify-center h-full">
-                      {acState.power ? (
-                        <Wind className="text-miraie-500 animate-pulse" size={24} />
-                      ) : (
-                        <Wind className="text-slate-400" size={24} />
-                      )}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {/* Left Column - Main Control */}
+            <div className="lg:col-span-2 space-y-5">
+              {/* Temperature Card - MirAIe style */}
+              <div className="glass-card p-8 relative overflow-hidden">
+                {/* Mode gradient background */}
+                <div className={`absolute inset-0 bg-gradient-to-br ${acState.power ? getModeColor(acState.mode) : 'from-slate-100 to-slate-50'} opacity-[0.03]`} />
+                
+                <div className="relative">
+                  {/* Mode & Status Row */}
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                        acState.power ? 'bg-miraie-100 text-miraie-600' : 'bg-slate-100 text-slate-400'
+                      }`}>
+                        {getModeIcon(acState.mode === 'off' ? 'cool' : acState.mode)}
+                      </div>
+                      <span className="text-sm font-medium text-slate-600 capitalize">
+                        {acState.power ? acState.mode : 'Off'}
+                      </span>
                     </div>
-                  </div>
-
-                  {/* Temperature Display */}
-                  <div className="relative inline-block">
-                    <span className="text-8xl font-light text-slate-900 tracking-tighter">
-                      {acState.temperature}
-                    </span>
-                    <span className="text-3xl font-light text-slate-400 absolute top-2 -right-8">
-                      °C
-                    </span>
-                  </div>
-
-                  {/* Room temperature */}
-                  <div className="flex items-center justify-center gap-4 mt-4 text-sm text-slate-500">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-2 text-sm text-slate-500">
                       <Thermometer size={14} />
-                      <span>Room: {acState.roomTemperature}°C</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Droplets size={14} />
-                      <span>Humidity: {acState.humidity}%</span>
+                      <span>Room {acState.roomTemperature}°C</span>
                     </div>
                   </div>
-                </div>
 
-                {/* Temperature Controls */}
-                <div className="flex items-center justify-center gap-6 mb-8">
-                  <button
-                    onClick={decreaseTemp}
-                    disabled={!acState.power || isSending || acState.temperature <= 16}
-                    className="w-12 h-12 rounded-full bg-white border border-slate-200 flex items-center justify-center 
-                             text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all
-                             disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
-                  >
-                    <Minus size={20} />
-                  </button>
+                  {/* Large Temperature Display */}
+                  <div className="text-center mb-8">
+                    <div className="relative inline-flex items-start">
+                      <span className="text-8xl font-extralight text-slate-900 tracking-tighter leading-none">
+                        {acState.temperature}
+                      </span>
+                      <span className="text-2xl font-light text-slate-400 mt-2">°C</span>
+                    </div>
+                  </div>
 
-                  <input
-                    type="range"
-                    min="16"
-                    max="30"
-                    value={acState.temperature}
-                    onChange={(e) =>
-                      sendCommand({ temperature: parseInt(e.target.value) })
-                    }
-                    disabled={!acState.power || isSending}
-                    className="temp-slider flex-1 max-w-xs"
-                    style={{
-                      background: `linear-gradient(to right, ${
-                        acState.mode === 'heat' ? '#f97316' : '#0ea5e9'
-                      } 0%, ${
-                        acState.mode === 'heat' ? '#f97316' : '#0ea5e9'
-                      } ${((acState.temperature - 16) / 14) * 100}%, #e2e8f0 ${
-                        ((acState.temperature - 16) / 14) * 100
-                      }%, #e2e8f0 100%)`,
-                    }}
-                  />
+                  {/* Temperature +/- Controls */}
+                  <div className="flex items-center justify-center gap-8 mb-8">
+                    <button
+                      onClick={() => sendCommand({ temperature: Math.max(16, acState.temperature - 1) })}
+                      disabled={!acState.power || isSending || acState.temperature <= 16}
+                      className="w-14 h-14 rounded-full bg-white border-2 border-slate-200 flex items-center justify-center 
+                               text-slate-600 hover:border-miraie-300 hover:bg-miraie-50 transition-all
+                               disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
+                    >
+                      <Minus size={22} />
+                    </button>
 
-                  <button
-                    onClick={increaseTemp}
-                    disabled={!acState.power || isSending || acState.temperature >= 30}
-                    className="w-12 h-12 rounded-full bg-white border border-slate-200 flex items-center justify-center 
-                             text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all
-                             disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
-                  >
-                    <Plus size={20} />
-                  </button>
-                </div>
+                    <button
+                      onClick={togglePower}
+                      disabled={isSending}
+                      className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg ${
+                        acState.power
+                          ? 'bg-gradient-to-br from-miraie-500 to-miraie-600 text-white shadow-miraie-500/30 hover:shadow-miraie-500/50'
+                          : 'bg-slate-200 text-slate-500 shadow-slate-200/50 hover:bg-slate-300'
+                      } active:scale-95 disabled:opacity-50`}
+                    >
+                      <Power size={28} />
+                    </button>
 
-                {/* Power Button */}
-                <div className="flex justify-center mb-8">
-                  <button
-                    onClick={togglePower}
-                    disabled={isSending}
-                    className={`w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 ${
-                      acState.power
-                        ? 'bg-miraie-500 text-white shadow-lg shadow-miraie-500/30 hover:bg-miraie-600'
-                        : 'bg-slate-200 text-slate-500 hover:bg-slate-300'
-                    } active:scale-95 disabled:opacity-50`}
-                  >
-                    <Power size={32} />
-                  </button>
-                </div>
+                    <button
+                      onClick={() => sendCommand({ temperature: Math.min(30, acState.temperature + 1) })}
+                      disabled={!acState.power || isSending || acState.temperature >= 30}
+                      className="w-14 h-14 rounded-full bg-white border-2 border-slate-200 flex items-center justify-center 
+                               text-slate-600 hover:border-miraie-300 hover:bg-miraie-50 transition-all
+                               disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
+                    >
+                      <Plus size={22} />
+                    </button>
+                  </div>
 
-                {/* Mode Selection */}
-                <div>
-                  <h3 className="text-sm font-medium text-slate-500 mb-3 text-center">Mode</h3>
-                  <div className="flex justify-center gap-2 flex-wrap">
-                    {modes.map((mode) => (
+                  {/* Mode Tabs - MirAIe style */}
+                  <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                    {[
+                      { value: 'cool', label: 'Cool', icon: <Snowflake size={14} /> },
+                      { value: 'heat', label: 'Heat', icon: <Flame size={14} /> },
+                      { value: 'dry', label: 'Dry', icon: <Droplets size={14} /> },
+                      { value: 'auto', label: 'Auto', icon: <Gauge size={14} /> },
+                      { value: 'fan', label: 'Fan', icon: <Fan size={14} /> },
+                    ].map((mode) => (
                       <button
                         key={mode.value}
-                        onClick={() => sendCommand({ mode: mode.value })}
-                        disabled={!acState.power || isSending}
-                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200
-                          ${
-                            acState.mode === mode.value
-                              ? `${mode.color} border-current shadow-sm`
-                              : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
-                          }
-                          disabled:opacity-40 disabled:cursor-not-allowed active:scale-95`}
+                        onClick={() => sendCommand({ mode: mode.value as ACMode, power: true })}
+                        disabled={isSending}
+                        className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200 whitespace-nowrap ${
+                          acState.power && acState.mode === mode.value
+                            ? 'bg-miraie-500 text-white border-miraie-500 shadow-sm'
+                            : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                        } disabled:opacity-40 active:scale-95`}
                       >
                         {mode.icon}
                         {mode.label}
@@ -561,65 +485,199 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-            </div>
 
-            {/* Side Controls */}
-            <div className="space-y-6">
-              {/* Fan Speed */}
+              {/* Fan Speed - MirAIe style slider */}
               <div className="glass-card p-6">
-                <h3 className="text-sm font-medium text-slate-500 mb-4 flex items-center gap-2">
-                  <Fan size={16} />
-                  Fan Speed
-                </h3>
-                <div className="grid grid-cols-4 gap-2">
-                  {fanSpeeds.map((speed) => (
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                    <Fan size={16} className="text-slate-500" />
+                    Fan Speed
+                  </h3>
+                  <span className="text-sm font-semibold text-miraie-600">
+                    {acState.fanSpeed === 'auto' ? 'Auto' : `Level ${acState.fanSpeed}`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {(['auto', '1', '2', '3', '4', '5'] as FanSpeed[]).map((speed, i) => (
                     <button
-                      key={speed.value}
-                      onClick={() => sendCommand({ fanSpeed: speed.value })}
+                      key={speed}
+                      onClick={() => sendCommand({ fanSpeed: speed })}
                       disabled={!acState.power || isSending}
-                      className={`py-2.5 rounded-xl text-xs font-medium transition-all duration-200
-                        ${
-                          acState.fanSpeed === speed.value
-                            ? 'bg-miraie-500 text-white shadow-sm'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }
-                        disabled:opacity-40 disabled:cursor-not-allowed active:scale-95`}
+                      className={`flex-1 py-3 rounded-xl text-xs font-medium transition-all duration-200 ${
+                        acState.fanSpeed === speed
+                          ? 'bg-miraie-500 text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      } disabled:opacity-40 active:scale-95`}
                     >
-                      {speed.label}
+                      {speed === 'auto' ? 'Auto' : i}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Presets */}
+              {/* Converti7 - MirAIe style */}
               <div className="glass-card p-6">
-                <h3 className="text-sm font-medium text-slate-500 mb-4 flex items-center gap-2">
-                  <Zap size={16} />
-                  Presets
-                </h3>
-                <div className="space-y-2">
-                  {presets.map((preset) => (
+                <button
+                  onClick={() => setShowConverti(!showConverti)}
+                  className="w-full flex items-center justify-between"
+                >
+                  <h3 className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                    <Zap size={16} className="text-slate-500" />
+                    Converti7 Power Level
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-miraie-600">
+                      {acState.convertiMode === 'off' ? 'Off' : 
+                       acState.convertiMode === 'fc' ? 'FC' :
+                       acState.convertiMode === 'hc' ? 'HC' :
+                       `${acState.convertiMode}%`}
+                    </span>
+                    {showConverti ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                  </div>
+                </button>
+                
+                {showConverti && (
+                  <div className="mt-4 grid grid-cols-5 gap-2 animate-fade-in">
+                    {convertiOptions.map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => sendCommand({ convertiMode: opt.value })}
+                        disabled={!acState.power || isSending}
+                        className={`py-2.5 rounded-xl text-xs font-medium transition-all duration-200 ${
+                          acState.convertiMode === opt.value
+                            ? 'bg-miraie-500 text-white shadow-sm'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        } disabled:opacity-40 active:scale-95`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Nanoe & LED Display */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="glass-card p-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Shield size={16} className="text-teal-500" />
+                      <span className="text-sm font-medium text-slate-700">Nanoe™</span>
+                    </div>
                     <button
-                      key={preset.value}
-                      onClick={() => sendCommand({ preset: preset.value })}
+                      onClick={() => sendCommand({ nanoeG: !acState.nanoeG })}
                       disabled={!acState.power || isSending}
-                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all duration-200
-                        ${
-                          acState.preset === preset.value
-                            ? 'bg-miraie-50 text-miraie-700 border border-miraie-200'
-                            : 'bg-slate-50 text-slate-600 border border-transparent hover:bg-slate-100'
-                        }
-                        disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98]`}
-                    >
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                        acState.preset === preset.value ? 'bg-miraie-100' : 'bg-slate-200'
-                      }`}>
-                        {preset.icon}
-                      </span>
-                      <div className="text-left">
-                        <div className="font-medium">{preset.label}</div>
-                        <div className="text-xs text-slate-400">{preset.desc}</div>
+                      className={`toggle-switch ${acState.nanoeG ? 'active' : ''}`}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-400 mt-2">
+                    {acState.nanoeG ? 'Air purification active' : 'Tap to enable'}
+                  </p>
+                </div>
+
+                <div className="glass-card p-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {acState.acdc ? <Eye size={16} className="text-slate-600" /> : <EyeOff size={16} className="text-slate-400" />}
+                      <span className="text-sm font-medium text-slate-700">LED Display</span>
+                    </div>
+                    <button
+                      onClick={() => sendCommand({ acdc: !acState.acdc })}
+                      disabled={isSending}
+                      className={`toggle-switch ${acState.acdc ? 'active' : ''}`}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-400 mt-2">
+                    {acState.acdc ? 'Display is on' : 'Display is off'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column - Sensors & Info */}
+            <div className="space-y-5">
+              {/* Air Quality - MirAIe style */}
+              <div className="glass-card p-6">
+                <h3 className="text-sm font-medium text-slate-500 mb-4">Air Quality Sensor</h3>
+                <div className="text-center mb-4">
+                  <div className="text-4xl font-light text-slate-900 mb-1">
+                    {acState.airQuality}
+                  </div>
+                  <div className="text-sm text-slate-500">µg/m³</div>
+                </div>
+                {(() => {
+                  const aq = getAirQualityLabel(acState.airQuality);
+                  return (
+                    <div className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl ${aq.bg} border ${aq.border}`}>
+                      <Activity size={14} className={aq.color} />
+                      <span className={`text-sm font-medium ${aq.color}`}>{aq.label}</span>
+                    </div>
+                  );
+                })()}
+                <button className="w-full mt-4 py-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-700 transition-colors">
+                  Take Action
+                </button>
+              </div>
+
+              {/* Room Conditions */}
+              <div className="glass-card p-6">
+                <h3 className="text-sm font-medium text-slate-500 mb-4">Room Conditions</h3>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center">
+                        <Thermometer size={18} className="text-orange-500" />
                       </div>
+                      <div>
+                        <p className="text-sm text-slate-500">Temperature</p>
+                        <p className="text-xl font-semibold text-slate-900">{acState.roomTemperature}°C</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+                        <Droplets size={18} className="text-blue-500" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-slate-500">Humidity</p>
+                        <p className="text-xl font-semibold text-slate-900">{acState.humidity}%</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Presets - MirAIe style cards */}
+              <div className="glass-card p-6">
+                <h3 className="text-sm font-medium text-slate-500 mb-4">Quick Presets</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { id: 'sleep', label: 'Sleep', icon: <Moon size={20} />, desc: '26°C Low', color: 'from-indigo-500 to-purple-500' },
+                    { id: 'comfort', label: 'Comfort', icon: <Sun size={20} />, desc: '24°C Auto', color: 'from-amber-500 to-orange-500' },
+                    { id: 'purify', label: 'Purify', icon: <Shield size={20} />, desc: 'Nanoe On', color: 'from-teal-500 to-cyan-500' },
+                    { id: 'eco', label: 'Eco', icon: <Leaf size={20} />, desc: 'Energy Save', color: 'from-emerald-500 to-green-500' },
+                  ].map((preset) => (
+                    <button
+                      key={preset.id}
+                      onClick={() => {
+                        const commands: Record<string, Partial<ACState>> = {
+                          sleep: { power: true, mode: 'cool', temperature: 26, fanSpeed: '1', preset: 'sleep' },
+                          comfort: { power: true, mode: 'auto', temperature: 24, fanSpeed: 'auto', preset: 'comfort' },
+                          purify: { power: true, nanoeG: true, mode: 'fan', fanSpeed: '1' },
+                          eco: { power: true, mode: 'cool', temperature: 26, fanSpeed: 'auto', preset: 'economy' },
+                        };
+                        sendCommand(commands[preset.id] || {});
+                      }}
+                      disabled={isSending}
+                      className="p-4 rounded-2xl bg-white border border-slate-200 hover:border-slate-300 
+                               hover:shadow-md transition-all duration-200 text-left active:scale-95"
+                    >
+                      <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${preset.color} flex items-center justify-center text-white mb-3`}>
+                        {preset.icon}
+                      </div>
+                      <div className="font-medium text-slate-900 text-sm">{preset.label}</div>
+                      <div className="text-xs text-slate-400 mt-0.5">{preset.desc}</div>
                     </button>
                   ))}
                 </div>
@@ -630,194 +688,84 @@ export default function Dashboard() {
                 <h3 className="text-sm font-medium text-slate-500 mb-4">Swing</h3>
                 <div className="space-y-3">
                   <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-sm text-slate-700">Horizontal</span>
+                    <span className="text-sm text-slate-700">Vertical</span>
                     <button
-                      onClick={() => sendCommand({ swingH: !acState.swingH })}
+                      onClick={() => sendCommand({ verticalSwing: !acState.verticalSwing })}
                       disabled={!acState.power || isSending}
-                      className={`toggle-switch ${acState.swingH ? 'active' : ''}`}
+                      className={`toggle-switch ${acState.verticalSwing ? 'active' : ''}`}
                     />
                   </label>
                   <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-sm text-slate-700">Vertical</span>
+                    <span className="text-sm text-slate-700">Horizontal</span>
                     <button
-                      onClick={() => sendCommand({ swingV: !acState.swingV })}
+                      onClick={() => sendCommand({ horizontalSwing: !acState.horizontalSwing })}
                       disabled={!acState.power || isSending}
-                      className={`toggle-switch ${acState.swingV ? 'active' : ''}`}
+                      className={`toggle-switch ${acState.horizontalSwing ? 'active' : ''}`}
                     />
                   </label>
                 </div>
               </div>
 
-              {/* Quick Actions */}
+              {/* Device Info */}
               <div className="glass-card p-6">
-                <h3 className="text-sm font-medium text-slate-500 mb-4">Quick Actions</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() =>
-                      sendCommand({ power: true, mode: 'cool', temperature: 22, fanSpeed: 'high' })
-                    }
-                    className="btn-secondary text-xs flex items-center gap-1.5 justify-center"
-                  >
-                    <Snowflake size={14} />
-                    Quick Cool
-                  </button>
-                  <button
-                    onClick={() =>
-                      sendCommand({ power: true, mode: 'auto', temperature: 24, fanSpeed: 'auto' })
-                    }
-                    className="btn-secondary text-xs flex items-center gap-1.5 justify-center"
-                  >
-                    <Gauge size={14} />
-                    Comfort
-                  </button>
-                  <button
-                    onClick={() =>
-                      sendCommand({ power: true, mode: 'cool', temperature: 26, fanSpeed: 'low', preset: 'economy' })
-                    }
-                    className="btn-secondary text-xs flex items-center gap-1.5 justify-center"
-                  >
-                    <Leaf size={14} />
-                    Sleep
-                  </button>
-                  <button
-                    onClick={() => sendCommand({ power: false, mode: 'off' })}
-                    className="btn-secondary text-xs flex items-center gap-1.5 justify-center text-red-600 hover:bg-red-50"
-                  >
-                    <Power size={14} />
-                    Turn Off
-                  </button>
+                <h3 className="text-sm font-medium text-slate-500 mb-4">Device Info</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Model</span>
+                    <span className="text-slate-900 font-medium">{acState.modelName || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Firmware</span>
+                    <span className="text-slate-900 font-medium">{acState.firmwareVersion || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Last Updated</span>
+                    <span className="text-slate-900 font-medium">
+                      {new Date(acState.lastUpdated).toLocaleTimeString()}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Schedule Tab */}
+        {/* ========== SCHEDULE TAB ========== */}
         {activeTab === 'schedule' && (
           <div className="glass-card p-8 animate-fade-in">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold text-slate-900">Schedules</h2>
-              <button
-                onClick={() => {
-                  setSchedules((prev) => [
-                    ...prev,
-                    {
-                      id: Date.now().toString(),
-                      time: '08:00',
-                      days: [1, 2, 3, 4, 5],
-                      command: { power: true, mode: 'cool', temperature: 24 },
-                      enabled: true,
-                      label: 'New Schedule',
-                    },
-                  ]);
-                }}
-                className="btn-primary flex items-center gap-2"
-              >
-                <Plus size={16} />
-                Add Schedule
+              <button className="btn-primary flex items-center gap-2">
+                <Plus size={16} /> Add Schedule
               </button>
             </div>
-
-            {schedules.length === 0 ? (
-              <div className="text-center py-12">
-                <Clock className="mx-auto mb-4 text-slate-300" size={48} />
-                <p className="text-slate-500">No schedules yet</p>
-                <p className="text-sm text-slate-400 mt-1">
-                  Create a schedule to automate your AC
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {schedules.map((schedule) => (
-                  <div
-                    key={schedule.id}
-                    className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl"
-                  >
-                    <button
-                      onClick={() =>
-                        setSchedules((prev) =>
-                          prev.map((s) =>
-                            s.id === schedule.id
-                              ? { ...s, enabled: !s.enabled }
-                              : s
-                          )
-                        )
-                      }
-                      className={`toggle-switch ${schedule.enabled ? 'active' : ''}`}
-                    />
-                    <div className="flex-1">
-                      <div className="font-semibold text-lg text-slate-900">
-                        {schedule.time}
-                      </div>
-                      <div className="text-sm text-slate-500">
-                        {schedule.label} • {schedule.command.temperature}°C •{' '}
-                        {schedule.command.mode}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() =>
-                        setSchedules((prev) =>
-                          prev.filter((s) => s.id !== schedule.id)
-                        )
-                      }
-                      className="btn-icon text-red-500 hover:bg-red-50"
-                    >
-                      <Minus size={18} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="text-center py-12">
+              <Clock className="mx-auto mb-4 text-slate-300" size={48} />
+              <p className="text-slate-500 font-medium">No schedules yet</p>
+              <p className="text-sm text-slate-400 mt-1">Create schedules to automate your AC</p>
+            </div>
           </div>
         )}
 
-        {/* Stats Tab */}
+        {/* ========== STATS TAB ========== */}
         {activeTab === 'stats' && (
-          <div className="space-y-6 animate-fade-in">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 stagger-children">
-              <div className="stat-card">
-                <div className="flex items-center gap-2 text-slate-500 text-sm">
-                  <Clock size={16} />
-                  Runtime Today
+          <div className="space-y-5 animate-fade-in">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { label: 'Runtime Today', value: '4.5h', icon: <Clock size={16} />, change: '↓ 12%' },
+                { label: 'Energy Used', value: '3.2 kWh', icon: <Zap size={16} />, change: '≈ ₹25.60' },
+                { label: 'Avg Temp', value: '23.5°C', icon: <Thermometer size={16} />, change: 'Set: 24°C' },
+                { label: 'Most Used', value: 'Cool', icon: <Snowflake size={16} />, change: '68% runtime' },
+              ].map((stat, i) => (
+                <div key={i} className="glass-card p-5">
+                  <div className="flex items-center gap-2 text-slate-500 text-sm mb-2">
+                    {stat.icon}
+                    {stat.label}
+                  </div>
+                  <div className="text-2xl font-semibold text-slate-900">{stat.value}</div>
+                  <div className="text-xs text-slate-400 mt-1">{stat.change}</div>
                 </div>
-                <div className="text-3xl font-semibold text-slate-900">4.5h</div>
-                <div className="text-xs text-emerald-600">↓ 12% vs yesterday</div>
-              </div>
-              <div className="stat-card">
-                <div className="flex items-center gap-2 text-slate-500 text-sm">
-                  <Zap size={16} />
-                  Est. Energy
-                </div>
-                <div className="text-3xl font-semibold text-slate-900">3.2 kWh</div>
-                <div className="text-xs text-slate-500">≈ ₹25.60 today</div>
-              </div>
-              <div className="stat-card">
-                <div className="flex items-center gap-2 text-slate-500 text-sm">
-                  <Thermometer size={16} />
-                  Avg Temperature
-                </div>
-                <div className="text-3xl font-semibold text-slate-900">23.5°C</div>
-                <div className="text-xs text-slate-500">Set: 24°C avg</div>
-              </div>
-              <div className="stat-card">
-                <div className="flex items-center gap-2 text-slate-500 text-sm">
-                  <Wind size={16} />
-                  Most Used Mode
-                </div>
-                <div className="text-3xl font-semibold text-slate-900">Cool</div>
-                <div className="text-xs text-slate-500">68% of runtime</div>
-              </div>
-            </div>
-
-            <div className="glass-card p-6">
-              <h3 className="text-lg font-semibold text-slate-900 mb-4">Usage History</h3>
-              <div className="h-64 flex items-center justify-center text-slate-400">
-                <div className="text-center">
-                  <BarChart3 size={48} className="mx-auto mb-2 opacity-50" />
-                  <p>Usage charts will appear here</p>
-                  <p className="text-sm">Data is collected over time</p>
-                </div>
-              </div>
+              ))}
             </div>
 
             <div className="glass-card p-6">
@@ -827,18 +775,14 @@ export default function Dashboard() {
                   <Leaf className="text-blue-500 mt-0.5" size={18} />
                   <div>
                     <p className="text-sm font-medium text-blue-900">Eco Tip</p>
-                    <p className="text-sm text-blue-700">
-                      Setting your AC to 24°C instead of 22°C can save up to 15% on energy.
-                    </p>
+                    <p className="text-sm text-blue-700">Setting your AC to 24°C instead of 22°C can save up to 15% on energy.</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-xl">
                   <Zap className="text-amber-500 mt-0.5" size={18} />
                   <div>
                     <p className="text-sm font-medium text-amber-900">Peak Usage</p>
-                    <p className="text-sm text-amber-700">
-                      Your highest usage is between 2PM - 6PM. Consider pre-cooling during off-peak hours.
-                    </p>
+                    <p className="text-sm text-amber-700">Your highest usage is between 2PM - 6PM. Consider pre-cooling during off-peak hours.</p>
                   </div>
                 </div>
               </div>
@@ -846,37 +790,23 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Settings Tab */}
+        {/* ========== SETTINGS TAB ========== */}
         {activeTab === 'settings' && (
           <div className="glass-card p-8 animate-fade-in">
             <h2 className="text-xl font-semibold text-slate-900 mb-6">Settings</h2>
-
             <div className="space-y-6">
               <div>
                 <h3 className="text-sm font-medium text-slate-500 mb-3">Connection</h3>
                 <div className="p-4 bg-slate-50 rounded-xl">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      {acState.online ? (
-                        <Wifi className="text-emerald-500" size={20} />
-                      ) : (
-                        <WifiOff className="text-red-500" size={20} />
-                      )}
+                      {acState.online ? <Wifi className="text-emerald-500" size={20} /> : <WifiOff className="text-red-500" size={20} />}
                       <div>
-                        <p className="font-medium text-slate-900">
-                          {acState.online ? 'Connected' : 'Disconnected'}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          Last updated:{' '}
-                          {acState.lastUpdated
-                            ? new Date(acState.lastUpdated).toLocaleTimeString()
-                            : 'Never'}
-                        </p>
+                        <p className="font-medium text-slate-900">{acState.online ? 'Connected' : 'Disconnected'}</p>
+                        <p className="text-xs text-slate-500">Last updated: {new Date(acState.lastUpdated).toLocaleTimeString()}</p>
                       </div>
                     </div>
-                    <button onClick={pollStatus} className="btn-secondary text-sm">
-                      Refresh
-                    </button>
+                    <button onClick={pollStatus} className="btn-secondary text-sm">Refresh</button>
                   </div>
                 </div>
               </div>
@@ -889,14 +819,11 @@ export default function Dashboard() {
                       <Mic className="text-slate-600" size={20} />
                       <div>
                         <p className="font-medium text-slate-900">Voice Commands</p>
-                        <p className="text-xs text-slate-500">
-                          Control your AC with voice (browser support required)
-                        </p>
+                        <p className="text-xs text-slate-500">Control your AC with voice (browser support required)</p>
                       </div>
                     </div>
                     <button className="btn-secondary text-sm flex items-center gap-1.5">
-                      <Mic size={14} />
-                      Enable
+                      <Volume2 size={14} /> Enable
                     </button>
                   </div>
                 </div>
@@ -906,10 +833,7 @@ export default function Dashboard() {
                 <h3 className="text-sm font-medium text-slate-500 mb-3">Account</h3>
                 <div className="p-4 bg-slate-50 rounded-xl">
                   <button
-                    onClick={() => {
-                      setIsAuthenticated(false);
-                      setDevices([]);
-                    }}
+                    onClick={() => { setIsAuthenticated(false); setDevices([]); }}
                     className="btn-secondary text-sm text-red-600 hover:bg-red-50"
                   >
                     Sign Out
@@ -925,22 +849,7 @@ export default function Dashboard() {
           <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
             <div className="glass-card p-4 border-red-200 bg-red-50 flex items-center gap-3">
               <p className="text-sm text-red-600">{error}</p>
-              <button
-                onClick={() => setError(null)}
-                className="text-red-400 hover:text-red-600"
-              >
-                ×
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Sending overlay */}
-        {isSending && (
-          <div className="fixed inset-0 bg-black/5 pointer-events-none z-40 flex items-center justify-center">
-            <div className="glass-card px-4 py-2 flex items-center gap-2">
-              <RefreshCw className="animate-spin text-miraie-500" size={16} />
-              <span className="text-sm text-slate-600">Sending...</span>
+              <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 font-bold">×</button>
             </div>
           </div>
         )}
@@ -959,9 +868,7 @@ export default function Dashboard() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg transition-colors ${
-                activeTab === tab.id
-                  ? 'text-miraie-600'
-                  : 'text-slate-400 hover:text-slate-600'
+                activeTab === tab.id ? 'text-miraie-600' : 'text-slate-400'
               }`}
             >
               {tab.icon}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseDeviceState } from '@/lib/miraie-api';
-import { getCachedAuth } from '../auth/route';
+import { getCachedAuth } from '@/lib/auth-state';
 
 // In-memory status cache
 const statusCache: Map<
