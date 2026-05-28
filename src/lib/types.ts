@@ -27,6 +27,8 @@ export interface MirAIeDevice {
   deviceId: string;
   deviceName: string;
   deviceType?: string;
+  category?: string;
+  modelId?: string;
   topic: string[];
   homeId?: string;
   homeName?: string;
@@ -35,6 +37,7 @@ export interface MirAIeDevice {
   firmwareVersion?: string;
   modelName?: string;
   online?: boolean;
+  status?: any; // Added to support Matter devices real-time status block
 }
 
 // ----- AC Operation Modes -----
@@ -81,6 +84,7 @@ export interface ACState {
   humidity: number;              // Indoor humidity %
 
   // Energy (via cloud polling)
+  energyToday?: number;         // kWh
   energyConsumption?: number;   // kWh
   powerUsage?: number;          // Current watts
 
@@ -89,6 +93,7 @@ export interface ACState {
   firmwareVersion?: string;
   modelName?: string;
   lastUpdated: string;
+  display?: boolean;
 }
 
 // ----- Command Types -----
@@ -106,6 +111,7 @@ export interface ACCommand {
   crystalClean?: boolean;
   trueAI?: boolean;
   acdc?: boolean;
+  display?: boolean;
 }
 
 // ----- Schedule Types -----

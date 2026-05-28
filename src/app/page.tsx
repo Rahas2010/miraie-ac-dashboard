@@ -37,6 +37,7 @@ export default function Dashboard() {
       const data = await res.json();
       if (res.ok) {
         localStorage.setItem('home_auth_token', data.token);
+        localStorage.setItem('home_refresh_token', data.refreshToken);
         setToken(data.token);
         setIsAuthenticated(true);
         fetchDevices(data.token);
@@ -85,7 +86,7 @@ export default function Dashboard() {
         body: JSON.stringify({ deviceId: selectedId, command }),
       });
       // Verification Poll
-      setTimeout(pollStatus, 800);
+      setTimeout(pollStatus, 1000);
     } finally {
       setIsSending(false);
     }
@@ -127,7 +128,7 @@ export default function Dashboard() {
     );
   }
 
-  if (!acState) return null;
+  if (!acState) return <div className="min-h-screen flex items-center justify-center bg-black"><RefreshCw className="animate-spin text-blue-500" /></div>;
 
   return (
     <div className="min-h-screen bg-black text-white p-6 font-mono">
@@ -182,7 +183,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-3 gap-3">
             <button onClick={() => sendCommand({ fanSpeed: acState.fanSpeed === 'auto' ? '1' : (parseInt(acState.fanSpeed)+1 > 5 ? 'auto' : (parseInt(acState.fanSpeed)+1).toString()) })} className="bg-zinc-900 p-4 border border-zinc-800 rounded-3xl flex flex-col items-center gap-2">
                 <Fan size={20} className="text-blue-500" />
-                <p className="text-[9px] font-bold">FAN: {acState.fanSpeed.toUpperCase()}</p>
+                <p className="text-[9px] font-bold uppercase">FAN: {acState.fanSpeed}</p>
             </button>
             <button onClick={() => sendCommand({ verticalSwing: !acState.verticalSwing })} className={`bg-zinc-900 p-4 border border-zinc-800 rounded-3xl flex flex-col items-center gap-2 ${acState.verticalSwing ? 'bg-blue-600/10 border-blue-500' : ''}`}>
                 <MoveVertical size={20} className={acState.verticalSwing ? 'text-blue-400' : 'text-zinc-600'} />
